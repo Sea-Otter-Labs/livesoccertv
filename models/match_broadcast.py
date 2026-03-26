@@ -55,12 +55,5 @@ class MatchBroadcast(BaseModel):
         {'comment': '比赛与转播整合结果表，API主数据 + LiveSoccerTV补充'}
     )
     
-    @property
-    def score_display(self) -> str:
-        """比分显示字符串"""
-        if self.home_score is not None and self.away_score is not None:
-            return f"{self.home_score} - {self.away_score}"
-        return None
-    
     def __repr__(self):
         return f"<MatchBroadcast(fixture_id={self.fixture_id}, {self.home_team_name} vs {self.away_team_name}, status={self.broadcast_match_status.value})>"

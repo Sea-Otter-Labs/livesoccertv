@@ -1,5 +1,6 @@
 import re
 import hashlib
+import time
 from datetime import datetime
 from urllib.parse import urljoin, urlparse
 
@@ -38,22 +39,19 @@ class LiveSoccerTVSpider(scrapy.Spider):
         
         # 配置
         self.selectors = {
-            'schedule_table': 'table.schedules blueborder',
-            'date_row': 'tr.drow',
-            'match_row': 'tr.matchrow',
-            'channels_cell': 'td#channels',
-            'match_time': 'td.time',
-            'home_team': 'td.hometeam a',
-            'away_team': 'td.awayteam a',
-            'pagination': 'div.pagination',
-            'prev_button': 'a[title*="Previous"], a.prev',
-            'next_button': 'a[title*="Next"], a.next',
+            'schedule_table': 'css:table.schedules.blueborder',
+            'date_row': 'css:tr.drow',
+            'match_row': 'css:tr.matchrow',
+            'channels_cell': 'css:td#channels',
+            'match_time': 'css:.timecell .ts',
+            'match_link': 'css:td#match a',
+            'pagination': 'css:div.pagination',
+            'prev_button': 'css:div.pagination[onclick*="previous"], div.pagination a[title*="Previous"], div.pagination a[title*="previous"], div.pagination a.prev',
+            'next_button': 'css:div.pagination[onclick*="next"], div.pagination a[title*="Next"], div.pagination a[title*="next"], div.pagination a.next',
         }
     
     async def start(self):
-        """
-        异步开始请求（Scrapy 2.13+ 推荐方式）
-        """
+
         if not self.start_url:
             self.logger.error("No start_url provided")
             return
@@ -69,9 +67,7 @@ class LiveSoccerTVSpider(scrapy.Spider):
         )
     
     def start_requests(self):
-        """
-        同步版本（向后兼容）
-        """
+
         if not self.start_url:
             self.logger.error("No start_url provided")
             return
@@ -147,7 +143,7 @@ class LiveSoccerTVSpider(scrapy.Spider):
         
         try:
             # 等待表格加载
-            if not self.page.ele(self.selectors['schedule_table'], timeout=10):
+            if not self._wait_until_page_ready(timeout=30):
                 self.logger.warning(f"Schedule table not found on {page_url}")
                 return matches
             
@@ -167,6 +163,83 @@ class LiveSoccerTVSpider(scrapy.Spider):
             self.logger.error(f"Error parsing current page: {e}")
         
         return matches
+
+    def _wait_until_page_ready(self, timeout=20):
+        """等待业务页面恢复到可解析状态。"""
+        end_time = time.time() + timeout
+        logged_captcha_wait = False
+
+        while time.time() < end_time:
+            try:
+                self.page.wait.doc_loaded(timeout=3)
+            except Exception:
+                pass
+
+            try:
+                if self.page.ele(self.selectors['schedule_table'], timeout=1):
+                    self.captcha_detected = False
+                    return True
+            except Exception:
+                pass
+
+            if self._is_captcha_page():
+                if not logged_captcha_wait:
+                    self.logger.info("Captcha still active, waiting for manual verification to complete...")
+                    logged_captcha_wait = True
+                time.sleep(1)
+                continue
+
+            time.sleep(1)
+
+        return False
+
+    def _is_captcha_page(self):
+        """判断当前页面是否仍处于验证码或安全校验状态。"""
+        try:
+            title = (self.page.title or '').lower()
+        except Exception:
+            title = ''
+
+        title_indicators = ['captcha', 'security check', 'just a moment', 'attention required']
+        if any(keyword in title for keyword in title_indicators):
+            return True
+
+        try:
+            if self.page.ele(self.selectors['schedule_table'], timeout=0.5):
+                return False
+        except Exception:
+            pass
+
+        strong_selectors = [
+            'css:.cf-browser-verification',
+            'css:#challenge-running',
+            'css:#captcha',
+            'css:.captcha',
+        ]
+
+        for selector in strong_selectors:
+            try:
+                if self.page.ele(selector, timeout=0.5):
+                    return True
+            except Exception:
+                continue
+
+        weak_selectors = [
+            'css:input[name="cf-turnstile-response"]',
+            'css:.g-recaptcha',
+            'css:iframe[src*="recaptcha"]',
+            'css:.h-captcha',
+            'css:iframe[src*="hcaptcha"]',
+        ]
+
+        for selector in weak_selectors:
+            try:
+                if self.page.ele(selector, timeout=0.5):
+                    return True
+            except Exception:
+                continue
+
+        return False
     
     def _crawl_pagination(self, direction):
         """
@@ -213,6 +286,10 @@ class LiveSoccerTVSpider(scrapy.Spider):
                 
                 # 等待页面加载
                 self.page.wait.doc_loaded(timeout=20)
+
+                if not self._wait_until_page_ready(timeout=30):
+                    self.logger.warning(f"Page not ready after {direction} pagination click")
+                    break
                 
                 # 检查页面是否变化（去重）
                 page_hash = self._get_page_hash()
@@ -302,14 +379,11 @@ class LiveSoccerTVSpider(scrapy.Spider):
             # 提取时间
             time_elem = row.ele(self.selectors['match_time'], timeout=0.5)
             time_text = time_elem.text.strip() if time_elem else ''
-            
-            # 提取主队
-            home_elem = row.ele(self.selectors['home_team'], timeout=0.5)
-            home_team = home_elem.text.strip() if home_elem else ''
-            
-            # 提取客队
-            away_elem = row.ele(self.selectors['away_team'], timeout=0.5)
-            away_team = away_elem.text.strip() if away_elem else ''
+
+            # 提取比赛文本并拆分主客队
+            match_elem = row.ele(self.selectors['match_link'], timeout=0.5)
+            match_text = match_elem.text.strip() if match_elem else ''
+            home_team, away_team = self._split_match_teams(match_text)
             
             if not home_team or not away_team:
                 return None
@@ -337,7 +411,7 @@ class LiveSoccerTVSpider(scrapy.Spider):
                 'away_team_name_normalized': normalize_team_name(away_team),
                 'channel_list': channels,
                 'pagination_cursor': pagination_cursor,
-                'source_match_text': f"{home_team} vs {away_team}",
+                'source_match_text': match_text or f"{home_team} vs {away_team}",
                 'page_url': page_url,
             }
             
@@ -346,6 +420,22 @@ class LiveSoccerTVSpider(scrapy.Spider):
         except Exception as e:
             self.logger.debug(f"Error parsing match row: {e}")
             return None
+
+    def _split_match_teams(self, match_text):
+        """从比赛文案中拆分主客队"""
+        text = re.sub(r'\s+', ' ', (match_text or '').strip())
+        if not text:
+            return '', ''
+
+        vs_match = re.match(r'^(.*?)\s+vs\s+(.*)$', text, flags=re.IGNORECASE)
+        if vs_match:
+            return vs_match.group(1).strip(), vs_match.group(2).strip()
+
+        score_match = re.match(r'^(.*?)\s+\d+\s*-\s*\d+\s+(.*)$', text)
+        if score_match:
+            return score_match.group(1).strip(), score_match.group(2).strip()
+
+        return '', ''
     
     def _extract_channels(self, row):
         """提取频道信息"""

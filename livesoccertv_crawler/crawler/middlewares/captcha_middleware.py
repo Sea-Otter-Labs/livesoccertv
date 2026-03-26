@@ -67,7 +67,7 @@ class CaptchaDetectionMiddleware:
                 )
             
             # 等待人工处理
-            if self._wait_for_captcha_resolution(page):
+            if self._wait_for_captcha_resolution(page, spider):
                 logger.info("Captcha resolved, continuing...")
                 # 刷新页面内容
                 html = page.html
@@ -86,32 +86,75 @@ class CaptchaDetectionMiddleware:
         Returns:
             dict: {'type': 'captcha_type'} 或 None
         """
+        spider = getattr(self.crawler, 'spider', None)
+
         # 检查标题
-        title = page.title.lower()
+        title = (page.title or '').lower()
         if any(keyword in title for keyword in ['captcha', 'security check', 'just a moment', 'attention required']):
             return {'type': 'unknown', 'indicator': 'title'}
-        
-        # 检查选择器
-        captcha_indicators = [
+
+        # 先检查强信号挑战页特征
+        strong_indicators = [
             ('.cf-browser-verification', 'cloudflare'),
             ('#challenge-running', 'cloudflare'),
+            ('#captcha', 'generic'),
+            ('.captcha', 'generic'),
+        ]
+
+        for selector, captcha_type in strong_indicators:
+            try:
+                if page.ele(selector, timeout=0.5):
+                    return {'type': captcha_type, 'indicator': selector}
+            except Exception:
+                continue
+
+        # 普通业务页常驻的 invisible reCAPTCHA / iframe 不能直接视为 challenge。
+        if self._has_business_content(page, spider):
+            return None
+
+        weak_indicators = [
             ('input[name="cf-turnstile-response"]', 'cloudflare_turnstile'),
             ('.g-recaptcha', 'recaptcha'),
             ('iframe[src*="recaptcha"]', 'recaptcha'),
             ('.h-captcha', 'hcaptcha'),
             ('iframe[src*="hcaptcha"]', 'hcaptcha'),
-            ('#captcha', 'generic'),
-            ('.captcha', 'generic'),
         ]
-        
-        for selector, captcha_type in captcha_indicators:
+
+        for selector, captcha_type in weak_indicators:
             try:
                 if page.ele(selector, timeout=0.5):
                     return {'type': captcha_type, 'indicator': selector}
-            except:
+            except Exception:
                 continue
         
         return None
+
+    def _has_business_content(self, page, spider) -> bool:
+        """检查业务主内容是否已出现，用于避免误判常驻验证码挂件。"""
+        content_selectors = []
+
+        if spider and hasattr(spider, 'selectors'):
+            schedule_table = spider.selectors.get('schedule_table')
+            if schedule_table:
+                content_selectors.append(schedule_table)
+
+        content_selectors.extend([
+            'css:table.schedules.blueborder',
+            'css:#_live table.schedules.blueborder',
+        ])
+
+        seen = set()
+        for selector in content_selectors:
+            if not selector or selector in seen:
+                continue
+            seen.add(selector)
+            try:
+                if page.ele(selector, timeout=0.5):
+                    return True
+            except Exception:
+                continue
+
+        return False
     
     def _save_screenshot(self, page) -> str:
         """保存验证码截图"""
@@ -127,35 +170,75 @@ class CaptchaDetectionMiddleware:
         except Exception as e:
             logger.error(f"Failed to save screenshot: {e}")
             return ""
+
+    def _is_page_ready(self, page, spider) -> bool:
+        """检查验证码结束后业务页面是否真正恢复可解析。"""
+        ready_selectors = []
+
+        if spider and hasattr(spider, 'selectors'):
+            schedule_table = spider.selectors.get('schedule_table')
+            if schedule_table:
+                ready_selectors.append(schedule_table)
+
+        ready_selectors.extend([
+            'css:table.schedules.blueborder',
+            'css:#_live table.schedules.blueborder',
+        ])
+
+        seen = set()
+        for selector in ready_selectors:
+            if not selector or selector in seen:
+                continue
+            seen.add(selector)
+            try:
+                if page.ele(selector, timeout=1):
+                    return True
+            except Exception:
+                continue
+
+        return False
     
-    def _wait_for_captcha_resolution(self, page) -> bool:
+    def _wait_for_captcha_resolution(self, page, spider) -> bool:
         """
         等待验证码被解决
         
         Returns:
             bool: True 如果验证码已解决，False 如果超时
         """
-        spider = self.crawler.spider
         logger.info(f"Waiting for captcha resolution (max {self.max_wait_time}s)...")
         
         start_time = time.time()
         check_count = 0
+        page_ready_logged = False
         
         while time.time() - start_time < self.max_wait_time:
             time.sleep(self.check_interval)
             check_count += 1
+
+            try:
+                page.wait.doc_loaded(timeout=3)
+            except Exception:
+                pass
             
             # 检查验证码是否还存在
             captcha_info = self._detect_captcha(page)
             
             if not captcha_info:
-                logger.info(f"Captcha resolved after {check_count} checks")
-                return True
+                if self._is_page_ready(page, spider):
+                    logger.info(f"Captcha resolved and page ready after {check_count} checks")
+                    return True
+
+                if not page_ready_logged:
+                    logger.info("Captcha challenge cleared, waiting for target page to finish loading...")
+                    page_ready_logged = True
             
             # 每30秒打印一次日志
             if check_count % 15 == 0:
                 elapsed = int(time.time() - start_time)
-                logger.info(f"Still waiting for captcha resolution... ({elapsed}s elapsed)")
+                if captcha_info:
+                    logger.info(f"Still waiting for captcha resolution... ({elapsed}s elapsed)")
+                else:
+                    logger.info(f"Captcha solved but page not ready yet... ({elapsed}s elapsed)")
         
         logger.warning(f"Captcha resolution timeout after {self.max_wait_time}s")
         return False

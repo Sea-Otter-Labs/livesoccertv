@@ -80,7 +80,6 @@ def get_match_by_fixture_id(fixture_id: int):
                 'away_team_id': match.away_team_id,
                 'away_team': match.away_team_name,
                 'status': match.match_status,
-                'score': match.score_display,
                 'broadcast_match_status': match.broadcast_match_status.value if match.broadcast_match_status else None,
                 'matched_confidence': float(match.matched_confidence) if match.matched_confidence else None,
                 'channels': match.channels,
@@ -172,6 +171,7 @@ def list_matches():
             
             # 转换数据
             results = []
+            channels = []
             for match in matches:
                 results.append({
                     'fixture_id': match.fixture_id,
@@ -182,9 +182,8 @@ def list_matches():
                     'home_team': match.home_team_name,
                     'away_team': match.away_team_name,
                     'status': match.match_status,
-                    'score': match.score_display,
                     'broadcast_match_status': match.broadcast_match_status.value if match.broadcast_match_status else None,
-                    'channels_count': len(match.channels) if match.channels else 0
+                    'channels_count': channels.append(match.channels)
                 })
             
             return {

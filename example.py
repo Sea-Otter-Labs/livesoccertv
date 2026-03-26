@@ -10,10 +10,7 @@ page.get(url)
 
 # 等待人机验证出现并自动处理（DrissionPage 通常能直接无感通过）
 # 如果页面有明显的验证框，可以尝试等待几秒
-page.wait(3, 5)
-
-# # 获取源代码
-print(page.html)
+page.wait(10)
 
 # # 如果需要保存
 with open('livesoccertv-detail.html', 'w', encoding='utf-8') as f:
