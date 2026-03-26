@@ -1,9 +1,4 @@
-"""
-API 主比赛模型
-契约: API 主比赛契约
-"""
-
-from sqlalchemy import Column, BigInteger, Integer, String, Date, Index
+from sqlalchemy import Column, BigInteger, Integer, String, Date, Index, DateTime
 from sqlalchemy.orm import relationship
 from models.base import BaseModel
 

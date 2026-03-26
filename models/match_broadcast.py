@@ -1,9 +1,4 @@
-"""
-比赛转播整合结果模型
-契约: 对齐结果契约
-"""
-
-from sqlalchemy import Column, BigInteger, Integer, String, Date, JSON, Numeric, ForeignKey, Index, Enum
+from sqlalchemy import Column, BigInteger, Integer, String, Date, JSON, Numeric, ForeignKey, Index, Enum, DateTime
 from sqlalchemy.orm import relationship
 from models.base import BaseModel
 import enum
@@ -23,7 +18,7 @@ class MatchBroadcast(BaseModel):
     __tablename__ = 'match_broadcasts'
     
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    fixture_id = Column(Integer, nullable=False, unique=True, comment='API fixture_id 业务主键')
+    fixture_id = Column(Integer, ForeignKey('api_fixtures.fixture_id'), nullable=False, unique=True, comment='API fixture_id 业务主键')
     league_id = Column(Integer, nullable=False, comment='联赛ID')
     season = Column(Integer, nullable=False, comment='赛季')
     match_timestamp_utc = Column(Integer, nullable=False, comment='比赛时间 UTC 时间戳(秒)')

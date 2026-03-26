@@ -1,7 +1,3 @@
-"""
-Spiders Package
-"""
-
 from crawler.spiders.livesoccertv_spider import LiveSoccerTVSpider
 
 __all__ = [

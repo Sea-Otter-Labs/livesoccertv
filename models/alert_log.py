@@ -1,9 +1,5 @@
-"""
-告警记录模型
-契约: 告警契约
-"""
 
-from sqlalchemy import Column, BigInteger, Integer, String, Text, Boolean, ForeignKey, Index, Enum
+from sqlalchemy import Column, BigInteger, Integer, String, Text, Boolean, ForeignKey, Index, Enum, DateTime
 from sqlalchemy.orm import relationship
 from models.base import BaseModel
 import enum

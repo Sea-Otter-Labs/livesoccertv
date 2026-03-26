@@ -1,9 +1,4 @@
-"""
-球队名称映射模型
-用于球队名称标准化和别名匹配
-"""
-
-from sqlalchemy import Column, BigInteger, Integer, String, Boolean, Index, Enum, UniqueConstraint
+from sqlalchemy import Column, BigInteger, Integer, String, Boolean, Index, Enum, UniqueConstraint, DateTime
 from models.base import BaseModel
 import enum
 

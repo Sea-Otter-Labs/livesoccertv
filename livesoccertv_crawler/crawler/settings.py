@@ -1,6 +1,9 @@
-"""
-LiveSoccerTV 爬虫项目配置
-"""
+import sys
+import os
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
 
 BOT_NAME = 'livesoccertv_crawler'
 
@@ -17,7 +20,6 @@ ITEM_PIPELINES = {
 
 # 配置中间件
 DOWNLOADER_MIDDLEWARES = {
-    'crawler.middlewares.captcha_middleware.CaptchaDetectionMiddleware': 543,
     'crawler.middlewares.drission_middleware.DrissionPageMiddleware': 600,
 }
 
@@ -55,7 +57,6 @@ DRISSION_PAGE_CONFIG = {
     'headless': False,  # 开发时设为 False 以便观察，生产可设为 True
     'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'window_size': (1920, 1080),
-    'load_images': False,  # 不加载图片以提高速度
     'timeout': 30,
 }
 

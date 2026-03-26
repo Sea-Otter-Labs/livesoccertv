@@ -1,8 +1,3 @@
-"""
-验证码检测中间件
-检测并处理人机验证
-"""
-
 import time
 import os
 from datetime import datetime
@@ -34,9 +29,10 @@ class CaptchaDetectionMiddleware:
     @classmethod
     def from_crawler(cls, crawler):
         middleware = cls(crawler.settings)
+        middleware.crawler = crawler
         return middleware
     
-    def process_response(self, request, response, spider):
+    def process_response(self, request, response):
         """
         处理响应，检测验证码
         """
@@ -58,9 +54,10 @@ class CaptchaDetectionMiddleware:
             logger.warning(f"Captcha detected: {captcha_info['type']}")
             
             # 保存截图
-            screenshot_path = self._save_screenshot(page, spider)
+            screenshot_path = self._save_screenshot(page)
             
             # 更新任务状态为暂停
+            spider = self.crawler.spider
             if hasattr(spider, 'pause_for_captcha'):
                 spider.pause_for_captcha(
                     league_config_id=request.meta.get('league_config_id'),
@@ -70,7 +67,7 @@ class CaptchaDetectionMiddleware:
                 )
             
             # 等待人工处理
-            if self._wait_for_captcha_resolution(page, spider):
+            if self._wait_for_captcha_resolution(page):
                 logger.info("Captcha resolved, continuing...")
                 # 刷新页面内容
                 html = page.html
@@ -116,8 +113,9 @@ class CaptchaDetectionMiddleware:
         
         return None
     
-    def _save_screenshot(self, page, spider) -> str:
+    def _save_screenshot(self, page) -> str:
         """保存验证码截图"""
+        spider = self.crawler.spider
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         filename = f"captcha_{spider.name}_{timestamp}.png"
         filepath = os.path.join(self.screenshot_dir, filename)
@@ -130,13 +128,14 @@ class CaptchaDetectionMiddleware:
             logger.error(f"Failed to save screenshot: {e}")
             return ""
     
-    def _wait_for_captcha_resolution(self, page, spider) -> bool:
+    def _wait_for_captcha_resolution(self, page) -> bool:
         """
         等待验证码被解决
         
         Returns:
             bool: True 如果验证码已解决，False 如果超时
         """
+        spider = self.crawler.spider
         logger.info(f"Waiting for captcha resolution (max {self.max_wait_time}s)...")
         
         start_time = time.time()

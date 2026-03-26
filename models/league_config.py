@@ -1,8 +1,4 @@
-"""
-联赛配置模型
-"""
-
-from sqlalchemy import Column, BigInteger, Integer, String, Boolean, UniqueConstraint, Index
+from sqlalchemy import Column, BigInteger, Integer, String, Boolean, UniqueConstraint, Index, DateTime
 from sqlalchemy.orm import relationship
 from models.base import BaseModel
 

@@ -1,8 +1,3 @@
-"""
-Scrapy Items
-定义爬虫抓取的数据结构
-"""
-
 import scrapy
 from typing import Optional, List
 

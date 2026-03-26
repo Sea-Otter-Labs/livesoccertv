@@ -1,8 +1,3 @@
-"""
-Flask API 应用
-提供比赛转播信息查询接口
-"""
-
 import os
 import logging
 from datetime import datetime

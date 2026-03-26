@@ -1,17 +1,21 @@
-"""
-比赛数据 Pipeline
-处理抓取的比赛数据并存储到数据库
-"""
-
 import logging
 import asyncio
 from datetime import datetime
-from asgiref.sync import async_to_sync
+import sys
+import os
 
-from crawler.items import LiveSoccerTVMatchItem, CrawlTaskItem, CaptchaDetectedItem
-from repo import WebCrawlRawRepository, CrawlTaskStatusRepository, AlertLogRepository
+workspace_root = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+)
+if workspace_root not in sys.path:
+    sys.path.insert(0, workspace_root)
+
 from config.database import AsyncSessionLocal
-from models import AlertType, Severity, TaskPhase, TaskStatus
+from crawler.items import LiveSoccerTVMatchItem, CrawlTaskItem, CaptchaDetectedItem
+from models import AlertType, Severity
+from repo.alert_log_repo import AlertLogRepository
+from repo.crawl_task_status_repo import CrawlTaskStatusRepository
+from repo.web_crawl_raw_repo import WebCrawlRawRepository
 
 logger = logging.getLogger(__name__)
 
@@ -22,19 +26,27 @@ class MatchDataPipeline:
     将抓取的数据存储到数据库
     """
     
+    @classmethod
+    def from_crawler(cls, crawler):
+        pipeline = cls()
+        pipeline.crawler = crawler
+        return pipeline
+    
     def __init__(self):
         self.batch_stats = {}
     
-    def open_spider(self, spider):
+    def open_spider(self):
         """Spider 启动时初始化"""
+        spider = self.crawler.spider
         logger.info(f"Pipeline opened for spider: {spider.name}")
         self.batch_stats[spider.name] = {
             'matches_saved': 0,
             'errors': 0
         }
     
-    def close_spider(self, spider):
+    def close_spider(self):
         """Spider 关闭时输出统计"""
+        spider = self.crawler.spider
         stats = self.batch_stats.get(spider.name, {})
         logger.info(
             f"Pipeline closed for spider: {spider.name}. "
@@ -42,22 +54,22 @@ class MatchDataPipeline:
             f"Errors: {stats.get('errors', 0)}"
         )
     
-    def process_item(self, item, spider):
+    async def process_item(self, item):
         """处理 Item"""
         if isinstance(item, LiveSoccerTVMatchItem):
-            return self._process_match_item(item, spider)
+            return await self._process_match_item(item)
         elif isinstance(item, CrawlTaskItem):
-            return self._process_task_item(item, spider)
+            return await self._process_task_item(item)
         elif isinstance(item, CaptchaDetectedItem):
-            return self._process_captcha_item(item, spider)
+            return await self._process_captcha_item(item)
         
         return item
     
-    def _process_match_item(self, item, spider):
+    async def _process_match_item(self, item):
         """处理比赛数据 Item"""
+        spider = self.crawler.spider
         try:
-            # 使用 async_to_sync 运行异步数据库操作
-            async_to_sync(self._save_match)(item)
+            await self._save_match(item)
             
             self.batch_stats[spider.name]['matches_saved'] += 1
             logger.debug(f"Saved match: {item.get('home_team_name_raw')} vs {item.get('away_team_name_raw')}")
@@ -94,10 +106,10 @@ class MatchDataPipeline:
             await repo.create(data)
             await session.commit()
     
-    def _process_task_item(self, item, spider):
+    async def _process_task_item(self, item):
         """处理任务状态 Item"""
         try:
-            async_to_sync(self._update_task_status)(item)
+            await self._update_task_status(item)
             logger.debug(f"Updated task status: {item.get('status')}")
         except Exception as e:
             logger.error(f"Error updating task status: {e}")
@@ -143,10 +155,10 @@ class MatchDataPipeline:
             
             await session.commit()
     
-    def _process_captcha_item(self, item, spider):
+    async def _process_captcha_item(self, item):
         """处理验证码检测 Item"""
         try:
-            async_to_sync(self._save_captcha_alert)(item)
+            await self._save_captcha_alert(item)
             logger.warning(f"Captcha alert saved for league: {item.get('league_config_id')}")
         except Exception as e:
             logger.error(f"Error saving captcha alert: {e}")

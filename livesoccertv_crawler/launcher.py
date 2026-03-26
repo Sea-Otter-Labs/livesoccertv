@@ -1,20 +1,21 @@
-"""
-爬虫启动器
-支持从数据库读取配置并启动爬虫
-"""
-
 import asyncio
 import logging
+import os
+import sys
 from datetime import datetime
 from typing import List, Optional
+
+workspace_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if workspace_root not in sys.path:
+    sys.path.insert(0, workspace_root)
 
 from scrapy.crawler import CrawlerProcess
 from scrapy.settings import Settings
 
 from config.database import AsyncSessionLocal, init_db, close_db
 from repo import LeagueConfigRepository, CrawlTaskStatusRepository, SystemConfigRepository
-from crawler.crawler.settings import BOT_NAME
-from crawler.crawler.spiders import LiveSoccerTVSpider
+from crawler.settings import BOT_NAME
+from crawler.spiders import LiveSoccerTVSpider
 
 # 配置日志
 logging.basicConfig(
@@ -37,7 +38,7 @@ class CrawlerLauncher:
     def _init_settings(self):
         """初始化爬虫设置"""
         self.crawler_settings = Settings()
-        self.crawler_settings.setmodule('crawler.crawler.settings')
+        self.crawler_settings.setmodule('crawler.settings')
     
     async def get_enabled_leagues(self) -> List[dict]:
         """

@@ -1,9 +1,4 @@
-"""
-网页抓取原始数据模型
-契约: 网页补充比赛契约
-"""
-
-from sqlalchemy import Column, BigInteger, Integer, String, JSON, Text, ForeignKey, Index
+from sqlalchemy import Column, BigInteger, Integer, String, JSON, Text, ForeignKey, Index, DateTime
 from sqlalchemy.orm import relationship
 from models.base import BaseModel
 

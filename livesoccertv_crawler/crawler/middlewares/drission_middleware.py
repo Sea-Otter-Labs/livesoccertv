@@ -1,8 +1,3 @@
-"""
-DrissionPage Middleware
-处理浏览器初始化和页面加载
-"""
-
 from scrapy import signals
 from scrapy.http import HtmlResponse
 from scrapy.exceptions import IgnoreRequest
@@ -26,6 +21,7 @@ class DrissionPageMiddleware:
     @classmethod
     def from_crawler(cls, crawler):
         middleware = cls(crawler.settings)
+        middleware.crawler = crawler
         crawler.signals.connect(middleware.spider_opened, signal=signals.spider_opened)
         crawler.signals.connect(middleware.spider_closed, signal=signals.spider_closed)
         return middleware
@@ -45,12 +41,7 @@ class DrissionPageMiddleware:
         window_size = self.config.get('window_size', (1920, 1080))
         co.set_argument(f'--window-size={window_size[0]},{window_size[1]}')
         
-        # 不加载图片
-        if not self.config.get('load_images', True):
-            co.set_argument('--blink-settings=imagesEnabled=false')
-        
         # 禁用自动化检测
-        co.set_argument('--disable-blink-features=AutomationControlled')
         co.set_user_agent(self.config.get('user_agent'))
         
         # 初始化页面
@@ -71,7 +62,7 @@ class DrissionPageMiddleware:
             except Exception as e:
                 logger.error(f"Error closing browser: {e}")
     
-    def process_request(self, request, spider):
+    def process_request(self, request):
         """
         处理请求
         使用 DrissionPage 加载页面并返回响应
@@ -93,7 +84,7 @@ class DrissionPageMiddleware:
             
             # 等待页面加载完成
             timeout = self.config.get('timeout', 30)
-            self.page.wait.load_complete(timeout=timeout)
+            self.page.wait.doc_loaded(timeout=timeout)
             
             # 获取页面内容
             html = self.page.html

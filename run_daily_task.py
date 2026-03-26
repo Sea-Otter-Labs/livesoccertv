@@ -1,7 +1,3 @@
-"""
-运行每日任务脚本
-"""
-
 import os
 import sys
 import asyncio

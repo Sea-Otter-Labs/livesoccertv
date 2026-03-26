@@ -1,8 +1,3 @@
-"""
-LiveSoccerTV Spider
-抓取 LiveSoccerTV 联赛页面的比赛和频道信息
-"""
-
 import re
 import hashlib
 from datetime import datetime
@@ -43,7 +38,7 @@ class LiveSoccerTVSpider(scrapy.Spider):
         
         # 配置
         self.selectors = {
-            'schedule_table': 'table.schedules.blueborder',
+            'schedule_table': 'table.schedules blueborder',
             'date_row': 'tr.drow',
             'match_row': 'tr.matchrow',
             'channels_cell': 'td#channels',
@@ -55,9 +50,27 @@ class LiveSoccerTVSpider(scrapy.Spider):
             'next_button': 'a[title*="Next"], a.next',
         }
     
+    async def start(self):
+        """
+        异步开始请求（Scrapy 2.13+ 推荐方式）
+        """
+        if not self.start_url:
+            self.logger.error("No start_url provided")
+            return
+        
+        self.logger.info(f"Starting crawl for {self.league_name}: {self.start_url}")
+        self.logger.info(f"Time window: -{self.history_days}d to +{self.future_days}d")
+        
+        # 使用 DrissionPage 加载页面
+        yield Request(
+            url=self.start_url,
+            callback=self.parse_league_page,
+            meta={'use_drission': True, 'league_config_id': self.league_config_id}
+        )
+    
     def start_requests(self):
         """
-        开始请求
+        同步版本（向后兼容）
         """
         if not self.start_url:
             self.logger.error("No start_url provided")
@@ -108,7 +121,7 @@ class LiveSoccerTVSpider(scrapy.Spider):
         
         # 3. 回到起始页
         self.page.get(self.start_url)
-        self.page.wait.load_complete(timeout=10)
+        self.page.wait.doc_loaded(timeout=20)
         self.visited_cursors.clear()
         
         # 4. 向右翻页抓未来
@@ -199,7 +212,7 @@ class LiveSoccerTVSpider(scrapy.Spider):
                 button.click()
                 
                 # 等待页面加载
-                self.page.wait.load_complete(timeout=10)
+                self.page.wait.doc_loaded(timeout=20)
                 
                 # 检查页面是否变化（去重）
                 page_hash = self._get_page_hash()
@@ -305,7 +318,7 @@ class LiveSoccerTVSpider(scrapy.Spider):
             channels = self._extract_channels(row)
             
             # 解析时间戳
-            from crawler.crawler.utils import parse_livesoccertv_date, normalize_team_name
+            from crawler.utils import parse_livesoccertv_date, normalize_team_name
             timezone_hint = self._get_timezone_hint()
             timestamp = parse_livesoccertv_date(
                 current_date or '',
@@ -437,7 +450,7 @@ class LiveSoccerTVSpider(scrapy.Spider):
         if not timestamp:
             return False
         
-        from crawler.crawler.utils import utc_now_timestamp
+        from crawler.utils import utc_now_timestamp
         
         current_time = utc_now_timestamp()
         

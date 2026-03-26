@@ -1,9 +1,4 @@
-"""
-抓取任务状态模型
-用于断点恢复和人工校验流程追踪
-"""
-
-from sqlalchemy import Column, BigInteger, Integer, String, Date, ForeignKey, Index, Enum, UniqueConstraint
+from sqlalchemy import Column, BigInteger, Integer, String, Date, ForeignKey, Index, Enum, Text, UniqueConstraint, DateTime
 from sqlalchemy.orm import relationship
 from models.base import BaseModel
 import enum

@@ -1,9 +1,4 @@
-"""
-系统配置模型
-存储可配置参数
-"""
-
-from sqlalchemy import Column, BigInteger, String, Text, Boolean, UniqueConstraint
+from sqlalchemy import Column, BigInteger, String, Text, Boolean, UniqueConstraint, DateTime
 from models.base import BaseModel
 import enum
 

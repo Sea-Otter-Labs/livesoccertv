@@ -1,7 +1,3 @@
-"""
-爬虫工具函数
-"""
-
 import re
 from datetime import datetime
 from typing import Optional

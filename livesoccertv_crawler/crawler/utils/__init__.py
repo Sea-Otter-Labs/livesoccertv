@@ -1,8 +1,4 @@
-"""
-Utils Package
-"""
-
-from crawler.crawler.utils.helpers import (
+from crawler.utils.helpers import (
     parse_livesoccertv_date,
     normalize_team_name,
     utc_now_timestamp
