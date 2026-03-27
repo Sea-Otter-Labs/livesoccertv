@@ -171,8 +171,13 @@ def list_matches():
             
             # 转换数据
             results = []
-            channels = []
             for match in matches:
+                # 提取频道名称并拼接
+                channel_names = ''
+                if match.channels:
+                    names = [ch.get('name') for ch in match.channels if ch.get('name')]
+                    channel_names = ','.join(names)
+
                 results.append({
                     'fixture_id': match.fixture_id,
                     'league_id': match.league_id,
@@ -183,7 +188,8 @@ def list_matches():
                     'away_team': match.away_team_name,
                     'status': match.match_status,
                     'broadcast_match_status': match.broadcast_match_status.value if match.broadcast_match_status else None,
-                    'channels_count': channels.append(match.channels)
+                    'channels_count': len(match.channels) if match.channels else 0,
+                    'channel_names': channel_names
                 })
             
             return {

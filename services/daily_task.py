@@ -3,7 +3,6 @@
 整合 API 同步、网页抓取、比赛对齐的完整流程
 """
 
-import asyncio
 import logging
 from datetime import datetime
 from typing import Dict, Any, List, Optional
@@ -17,12 +16,9 @@ from repo import (
     ApiFixtureRepository,
     WebCrawlRawRepository,
     MatchBroadcastRepository,
-    CrawlTaskStatusRepository,
     AlertLogRepository,
-    TeamNameMappingRepository,
 )
-from models import TaskPhase, TaskStatus, BroadcastMatchStatus, AlertType, Severity
-from utils import MatchAligner, utc_now_timestamp
+from models import BroadcastMatchStatus, AlertType, Severity
 
 logger = logging.getLogger(__name__)
 
@@ -36,13 +32,11 @@ class DailyTaskOrchestrator:
     def __init__(self, api_key: str):
         self.api_key = api_key
         self.sync_service: Optional[ApiFootballSyncService] = None
-        self.aligner: Optional[MatchAligner] = None
         
     async def __aenter__(self):
         """异步上下文管理器入口"""
         self.sync_service = ApiFootballSyncService(self.api_key)
         await self.sync_service.__aenter__()
-        self.aligner = MatchAligner(time_tolerance_hours=4.0)
         return self
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -449,15 +443,3 @@ async def run_daily_task(api_key: str, league_config_id: Optional[int] = None):
     
     finally:
         await close_db()
-
-
-# 如果直接运行此文件
-if __name__ == '__main__':
-    import os
-    
-    api_key = os.getenv('API_FOOTBALL_KEY', '')
-    
-    if not api_key:
-        logger.error("Please set API_FOOTBALL_KEY environment variable")
-    else:
-        asyncio.run(run_daily_task(api_key))

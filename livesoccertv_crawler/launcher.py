@@ -159,11 +159,3 @@ def run_crawler(league_config_id: Optional[int] = None):
             await close_db()
     
     asyncio.run(_run())
-
-
-if __name__ == '__main__':
-    # 运行所有爬虫
-    run_crawler()
-    
-    # 或者运行指定联赛：
-    # run_crawler(league_config_id=1)

@@ -98,6 +98,18 @@ export API_FOOTBALL_KEY=your_api_key
 python run_daily_task.py
 ```
 
+### 5. 启动查询 API
+
+```bash
+python api/app.py
+```
+
+## 项目入口
+
+- `python run_daily_task.py`：唯一的主任务入口，按顺序执行 API 同步、网页抓取、比赛对齐
+- `python api/app.py`：唯一的查询 API 入口
+- `services/`、`repo/`、`models/`、`livesoccertv_crawler/`：内部模块，不作为直接运行入口
+
 ## 功能模块
 
 ### 1. API-Football 数据同步
@@ -143,15 +155,11 @@ python run_daily_task.py
 ## 开发调试
 
 ```bash
-# 仅运行 API 同步
-python demo_api_sync.py
+# 正式入口：运行完整任务
+python run_daily_task.py
 
-# 仅运行数据库操作示例
-python demo_db_operations.py
-
-# 运行单个联赛爬虫（Scrapy）
-cd crawler
-scrapy crawl livesoccertv -a league_config_id=1 -a league_name="La Liga" -a start_url="https://..."
+# 正式入口：启动 API
+python api/app.py
 ```
 
 ## License
