@@ -40,10 +40,20 @@ class CrawlTaskStatus(BaseModel):
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     crawl_batch_id = Column(String(50), nullable=False, comment='抓取批次ID')
     league_config_id = Column(BigInteger, ForeignKey('league_configs.id', ondelete='CASCADE'), nullable=False, comment='联赛配置ID')
-    task_phase = Column(Enum(TaskPhase), default=TaskPhase.INIT, comment='任务阶段')
-    status = Column(Enum(TaskStatus), default=TaskStatus.PENDING, comment='任务状态')
+    task_phase = Column(String(50), default=TaskPhase.INIT, comment='任务阶段')
+    # task_phase = Column(
+    #     Enum(TaskPhase, values_callable=lambda obj: [e.value for e in obj]),
+    #     default=TaskPhase.INIT,
+    #     comment='任务阶段'
+    # )
+    status = Column(String(50), default=TaskStatus.PENDING, comment='任务状态')
+    # status = Column(Enum(TaskStatus, values_callable=lambda obj: [e.value for e in obj]),
+    #     default=TaskPhase.INIT,
+    #     comment='任务阶段'
+    # )
     current_pagination_cursor = Column(String(200), comment='当前分页游标')
-    pagination_direction = Column(Enum(PaginationDirection), default=PaginationDirection.NONE, comment='当前翻页方向')
+    # pagination_direction = Column(Enum(PaginationDirection), default=PaginationDirection.NONE, comment='当前翻页方向')
+    pagination_direction = Column(String(50), default=PaginationDirection.NONE, comment='当前翻页方向')
     window_start_date = Column(Date, comment='时间窗口开始日期')
     window_end_date = Column(Date, comment='时间窗口结束日期')
     matches_crawled = Column(Integer, default=0, comment='已抓取比赛数')
@@ -51,8 +61,8 @@ class CrawlTaskStatus(BaseModel):
     started_at = Column(DateTime, comment='开始时间')  # type: ignore
     completed_at = Column(DateTime, comment='完成时间')  # type: ignore
     error_message = Column(Text, comment='错误信息')
-    captcha_detected_at = Column(DateTime, comment='检测到验证码时间')  # type: ignore
-    captcha_resolved_at = Column(DateTime, comment='验证码解决时间')  # type: ignore
+    # captcha_detected_at = Column(DateTime, comment='检测到验证码时间')  # type: ignore
+    # captcha_resolved_at = Column(DateTime, comment='验证码解决时间')  # type: ignore
     
     # 关系
     league_config = relationship("LeagueConfig", back_populates="crawl_task_statuses")

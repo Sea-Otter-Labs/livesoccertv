@@ -1,19 +1,14 @@
-"""
-数据库连接配置
-使用 SQLAlchemy + asyncio 异步模式
-"""
-
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
 import os
 from typing import AsyncGenerator
 
 # 数据库配置 - 请根据实际情况修改
-DB_HOST = os.getenv('DB_HOST', 'localhost')
+DB_HOST = os.getenv('DB_HOST', 'pplivedatabase.cn4csgi60ope.eu-west-3.rds.amazonaws.com')
 DB_PORT = os.getenv('DB_PORT', '3306')
-DB_NAME = os.getenv('DB_NAME', 'football_broadcasts')
-DB_USER = os.getenv('DB_USER', 'root')
-DB_PASSWORD = os.getenv('DB_PASSWORD', '')
+DB_NAME = os.getenv('DB_NAME', 'livesoccertv_list')
+DB_USER = os.getenv('DB_USER', 'admin')
+DB_PASSWORD = os.getenv('DB_PASSWORD', 'pplive123$')
 
 # 构建数据库URL (使用 aiomysql 驱动)
 DATABASE_URL = f"mysql+aiomysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"

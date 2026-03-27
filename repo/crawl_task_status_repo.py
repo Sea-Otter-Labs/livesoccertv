@@ -1,7 +1,3 @@
-"""
-抓取任务状态 Repository
-"""
-
 from typing import List, Optional
 from datetime import date
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -80,21 +76,21 @@ class CrawlTaskStatusRepository(BaseRepository[CrawlTaskStatus]):
         )
         return result.scalars().all()
     
-    async def get_paused_tasks(
-        self
-    ) -> List[CrawlTaskStatus]:
-        """获取暂停的任务（等待人工处理）"""
-        result = await self.session.execute(
-            select(CrawlTaskStatus)
-            .where(
-                and_(
-                    CrawlTaskStatus.task_phase == TaskPhase.PAUSED_CAPTCHA,
-                    CrawlTaskStatus.status == TaskStatus.PAUSED
-                )
-            )
-            .order_by(desc(CrawlTaskStatus.captcha_detected_at))
-        )
-        return result.scalars().all()
+    # async def get_paused_tasks(
+    #     self
+    # ) -> List[CrawlTaskStatus]:
+    #     """获取暂停的任务（等待人工处理）"""
+    #     result = await self.session.execute(
+    #         select(CrawlTaskStatus)
+    #         .where(
+    #             and_(
+    #                 CrawlTaskStatus.task_phase == TaskPhase.PAUSED_CAPTCHA,
+    #                 CrawlTaskStatus.status == TaskStatus.PAUSED
+    #             )
+    #         )
+    #         .order_by(desc(CrawlTaskStatus.captcha_detected_at))
+    #     )
+    #     return result.scalars().all()
     
     async def get_running_tasks(
         self
@@ -159,30 +155,30 @@ class CrawlTaskStatusRepository(BaseRepository[CrawlTaskStatus]):
             return await self.update(task_id, update_data)
         return None
     
-    async def mark_captcha_detected(
-        self,
-        task_id: int
-    ) -> Optional[CrawlTaskStatus]:
-        """标记检测到验证码"""
-        from datetime import datetime
+    # async def mark_captcha_detected(
+    #     self,
+    #     task_id: int
+    # ) -> Optional[CrawlTaskStatus]:
+    #     """标记检测到验证码"""
+    #     from datetime import datetime
         
-        return await self.update(task_id, {
-            'task_phase': TaskPhase.PAUSED_CAPTCHA,
-            'status': TaskStatus.PAUSED,
-            'captcha_detected_at': datetime.now()
-        })
+    #     return await self.update(task_id, {
+    #         'task_phase': TaskPhase.PAUSED_CAPTCHA,
+    #         'status': TaskStatus.PAUSED,
+    #         'captcha_detected_at': datetime.now()
+    #     })
     
-    async def mark_captcha_resolved(
-        self,
-        task_id: int
-    ) -> Optional[CrawlTaskStatus]:
-        """标记验证码已解决"""
-        from datetime import datetime
+    # async def mark_captcha_resolved(
+    #     self,
+    #     task_id: int
+    # ) -> Optional[CrawlTaskStatus]:
+    #     """标记验证码已解决"""
+    #     from datetime import datetime
         
-        return await self.update(task_id, {
-            'status': TaskStatus.RUNNING,
-            'captcha_resolved_at': datetime.now()
-        })
+    #     return await self.update(task_id, {
+    #         'status': TaskStatus.RUNNING,
+    #         'captcha_resolved_at': datetime.now()
+    #     })
     
     async def complete_task(
         self,

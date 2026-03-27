@@ -1,8 +1,3 @@
-"""
-API-Football 客户端
-用于获取比赛数据
-"""
-
 import logging
 import aiohttp
 import asyncio

@@ -191,7 +191,7 @@ def list_matches():
                     start_timestamp=date_from,
                     end_timestamp=date_to,
                     league_id=league_id,
-                    has_channels=has_channels
+                    has_channels=True
                 )
             elif broadcast_status:
                 from models import BroadcastMatchStatus

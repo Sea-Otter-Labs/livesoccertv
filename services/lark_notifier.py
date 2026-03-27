@@ -1,8 +1,3 @@
-"""
-Lark(飞书) 机器人通知服务
-用于发送告警通知到飞书群
-"""
-
 import logging
 import json
 from typing import Optional, Dict, Any, List

@@ -37,12 +37,12 @@ class DrissionPageMiddleware:
         if self.config.get('headless', False):
             co.headless(True)
         
-        # 窗口大小
-        window_size = self.config.get('window_size', (1920, 1080))
-        co.set_argument(f'--window-size={window_size[0]},{window_size[1]}')
+        # # 窗口大小
+        # window_size = self.config.get('window_size', (1920, 1080))
+        # co.set_argument(f'--window-size={window_size[0]},{window_size[1]}')
         
         # 禁用自动化检测
-        co.set_user_agent(self.config.get('user_agent'))
+        # co.set_user_agent(self.config.get('user_agent'))
         
         # 初始化页面
         try:

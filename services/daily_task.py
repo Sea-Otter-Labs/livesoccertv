@@ -5,7 +5,6 @@ from typing import Dict, Any, List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config.database import AsyncSessionLocal, init_db, close_db
-from livesoccertv_crawler.launcher import CrawlerLauncher
 from services import ApiFootballSyncService
 from repo import (
     LeagueConfigRepository,
@@ -47,7 +46,7 @@ class DailyTaskOrchestrator:
         session: AsyncSession,
         league_config_id: Optional[int] = None,
         skip_api_sync: bool = False,
-        skip_web_crawl: bool = False,
+        skip_web_crawl: bool = True,  # 默认跳过网页抓取，改为手动运行
         skip_alignment: bool = False
     ) -> Dict[str, Any]:
         """
@@ -94,6 +93,13 @@ class DailyTaskOrchestrator:
             except Exception as e:
                 logger.error(f"Web crawl phase failed: {e}")
                 results['errors'].append(f"Web crawl: {str(e)}")
+        else:
+            logger.info("=" * 60)
+            logger.info("Phase 2: LiveSoccerTV Web Crawl (SKIPPED)")
+            logger.info("Note: Please run crawler manually if needed:")
+            logger.info("  python livesoccertv_crawler/run_crawler_cli.py")
+            logger.info("=" * 60)
+            results['web_crawl'] = {'status': 'skipped', 'message': 'Manual run required'}
         
         # 阶段 3: 比赛对齐
         if not skip_alignment:
@@ -125,7 +131,7 @@ class DailyTaskOrchestrator:
         """
         results = await self.sync_service.sync_all_enabled_leagues(
             session=session,
-            full_sync=False  # 增量同步
+            full_sync=True  # 增量同步
         )
         
         logger.info(f"API Sync Results:")
@@ -142,16 +148,14 @@ class DailyTaskOrchestrator:
     ) -> Dict[str, Any]:
         """
         启动 Scrapy 爬虫抓取 LiveSoccerTV 数据
+        注意：此方法默认不执行，网页抓取已改为手动运行
+        如需自动运行，请设置 skip_web_crawl=False
         """
-        
-        launcher = CrawlerLauncher()
-        
-        if league_config_id:
-            await launcher.run_single(league_config_id)
-        else:
-            await launcher.run_all()
-        
-        return {'status': 'completed'}
+        logger.warning("Web crawl is now manual-only. Please run separately:")
+        logger.warning("  python livesoccertv_crawler/run_crawler_cli.py")
+        return {'status': 'manual', 'message': 'Please run crawler manually'}  
+    
+    # 旧的自动爬虫代码已移除，如需恢复请查看 git history
     
     async def _phase_alignment(
         self,

@@ -139,7 +139,7 @@ class CaptchaDetectionMiddleware:
                 content_selectors.append(schedule_table)
 
         content_selectors.extend([
-            'css:table.schedules.blueborder',
+            'css:#_live table.schedules.blueborder',
             'css:#_live table.schedules.blueborder',
         ])
 
@@ -181,7 +181,7 @@ class CaptchaDetectionMiddleware:
                 ready_selectors.append(schedule_table)
 
         ready_selectors.extend([
-            'css:table.schedules.blueborder',
+            'css:#_live table.schedules.blueborder',
             'css:#_live table.schedules.blueborder',
         ])
 

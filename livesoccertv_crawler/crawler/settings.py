@@ -54,7 +54,7 @@ DEFAULT_REQUEST_HEADERS = {
 
 # DrissionPage 配置
 DRISSION_PAGE_CONFIG = {
-    'headless': False,  # 开发时设为 False 以便观察，生产可设为 True
+    'headless': True,  # 开发时设为 False 以便观察，生产可设为 True
     'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'window_size': (1920, 1080),
     'timeout': 30,

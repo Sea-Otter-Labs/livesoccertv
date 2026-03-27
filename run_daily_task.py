@@ -4,7 +4,6 @@ import asyncio
 import logging
 from datetime import datetime
 
-# 添加项目根目录到 Python 路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from services import run_daily_task
@@ -61,6 +60,9 @@ async def main():
         web_crawl = results.get('web_crawl', {})
         logger.info(f"\n2. Web Crawl:")
         logger.info(f"   - Status: {web_crawl.get('status', 'unknown')}")
+        if web_crawl.get('status') == 'skipped':
+            logger.info(f"   - Note: Web crawl is now manual. Run separately if needed:")
+            logger.info(f"     python livesoccertv_crawler/run_crawler_cli.py")
         
         # 对齐结果
         alignment = results.get('alignment', {})

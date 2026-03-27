@@ -76,7 +76,7 @@ class LiveSoccerTVSpider(scrapy.Spider):
     
     def parse_league_page(self, response):
         """
-        解析联赛页面（测试模式：只爬取当前页）
+        解析联赛页面
         """
         self.page = response.meta.get('page')
         
@@ -93,7 +93,7 @@ class LiveSoccerTVSpider(scrapy.Spider):
             matches_crawled=self.matches_crawled
         )
         
-        # ===== 测试模式：只抓取当前页 =====
+        # 1. 抓取当前页
         matches = self._parse_current_page(response.url)
         for match_data in matches:
             yield self._create_match_item(match_data)
@@ -101,24 +101,22 @@ class LiveSoccerTVSpider(scrapy.Spider):
         
         self.logger.info(f"Current page: {len(matches)} matches extracted")
         
-        # ===== 以下翻页逻辑已注释（测试模式）=====
-        # # 2. 向左翻页抓历史
-        # left_matches = self._crawl_pagination('left')
-        # for match_data in left_matches:
-        #     yield self._create_match_item(match_data)
-        #     self.matches_crawled += 1
+        # 2. 向左翻页抓历史
+        left_matches = self._crawl_pagination('left')
+        for match_data in left_matches:
+            yield self._create_match_item(match_data)
+            self.matches_crawled += 1
         
-        # # 3. 回到起始页
-        # self.page.get(self.start_url)
-        # self.page.wait.doc_loaded(timeout=20)
-        # self.visited_cursors.clear()
+        # 3. 回到起始页
+        self.page.get(self.start_url)
+        self.page.wait.doc_loaded(timeout=20)
+        self.visited_cursors.clear()
         
-        # # 4. 向右翻页抓未来
-        # right_matches = self._crawl_pagination('right')
-        # for match_data in right_matches:
-        #     yield self._create_match_item(match_data)
-        #     self.matches_crawled += 1
-        # ===== 翻页逻辑注释结束 =====
+        # 4. 向右翻页抓未来
+        right_matches = self._crawl_pagination('right')
+        for match_data in right_matches:
+            yield self._create_match_item(match_data)
+            self.matches_crawled += 1
         
         # 完成任务
         yield self._create_task_item(
@@ -165,8 +163,7 @@ class LiveSoccerTVSpider(scrapy.Spider):
 
         while time.time() < end_time:
             try:
-                # self.page.wait.doc_loaded(timeout=3)
-                self.page.ele('css:#_live table.schedules.blueborder', timeout=10)
+                self.page.wait.doc_loaded(timeout=3)
             except Exception:
                 pass
 
@@ -479,20 +476,6 @@ class LiveSoccerTVSpider(scrapy.Spider):
                     if 'matchrow' in row_class:
                         match_data = self._parse_match_row(row, current_date, page_url, pagination_cursor)
                         if match_data:
-                            # 访问详情页提取国际频道
-                            match_detail_url = match_data.get('match_detail_url', '')
-                            international_channels = self._fetch_international_channels(match_detail_url)
-                            
-                            # 如果获取失败，跳过该比赛
-                            if not international_channels:
-                                self.logger.warning(
-                                    f"Failed to fetch international channels, skipping match: "
-                                    f"{match_data.get('source_match_text', 'Unknown')}"
-                                )
-                                continue
-                            
-                            # 填充国际频道信息
-                            match_data['channel_list'] = international_channels
                             matches.append(match_data)
                 
                 except Exception as e:
@@ -514,21 +497,22 @@ class LiveSoccerTVSpider(scrapy.Spider):
             return None
     
     def _parse_match_row(self, row, current_date, page_url, pagination_cursor):
-        """解析比赛行，提取基本信息和详情链接"""
+        """解析比赛行"""
         try:
             # 提取时间
             time_elem = row.ele('css:.timecell .ts', timeout=0.5)
             time_text = time_elem.text.strip() if time_elem else ''
 
-            # 提取比赛文本、拆分主客队、并提取详情链接
+            # 提取比赛文本并拆分主客队
             match_elem = row.ele('css:td#match a', timeout=0.5)
             match_text = match_elem.text.strip() if match_elem else ''
-            match_detail_url = match_elem.attr('href') if match_elem else ''
-            
             home_team, away_team = self._split_match_teams(match_text)
             
             if not home_team or not away_team:
                 return None
+            
+            # 提取频道
+            channels = self._extract_channels(row)
             
             # 解析时间戳
             timezone_hint = self._get_timezone_hint()
@@ -538,7 +522,7 @@ class LiveSoccerTVSpider(scrapy.Spider):
                 timezone_hint
             )
             
-            # 构建数据（不包含 channel_list，将在后续从详情页提取）
+            # 构建数据
             match_data = {
                 'match_date_text': current_date,
                 'match_time_text': time_text,
@@ -547,10 +531,10 @@ class LiveSoccerTVSpider(scrapy.Spider):
                 'home_team_name_normalized': normalize_team_name(home_team),
                 'away_team_name_raw': away_team,
                 'away_team_name_normalized': normalize_team_name(away_team),
+                'channel_list': channels,
                 'pagination_cursor': pagination_cursor,
                 'source_match_text': match_text or f"{home_team} vs {away_team}",
                 'page_url': page_url,
-                'match_detail_url': match_detail_url,
             }
             
             return match_data
@@ -575,107 +559,71 @@ class LiveSoccerTVSpider(scrapy.Spider):
 
         return '', ''
     
-
-    def _fetch_international_channels(self, match_detail_url):
-        """
-        访问比赛详情页面，提取国际频道信息
-        
-        Args:
-            match_detail_url: 比赛详情页面的URL（相对或绝对路径）
-        
-        Returns:
-            dict: 按国家分组的频道信息
-                  {'Afghanistan': ['FanCode'], 'Algeria': ['beIN SPORTS CONNECT'], ...}
-                  如果获取失败，返回空字典 {}
-        """
-        if not match_detail_url:
-            return {}
-        
-        # 构建完整URL
-        if not match_detail_url.startswith('http'):
-            match_detail_url = urljoin('https://www.livesoccertv.com', match_detail_url)
+    def _extract_channels(self, row):
+        """提取频道信息"""
+        channels = []
         
         try:
-            # 在新标签页打开详情链接
-            self.logger.debug(f"Opening match detail page: {match_detail_url}")
-            detail_page = self.page.new_tab(match_detail_url)
-            # detail_page.wait.doc_loaded(timeout=15)
+            channels_cell = row.ele('css:td#channels', timeout=0.5)
+            if not channels_cell:
+                return channels
             
-            # # 等待一下确保动态内容加载
-            # time.sleep(1)
-            detail_page.ele('css:#dynamic-international-tv table.ichannels', timeout=5)
+            channel_links = channels_cell.eles('a')
             
-            # 提取国际频道
-            channels = self._extract_international_channels()
-            
-            # 关闭标签页
-            detail_page.close()
-            
-            if channels:
-                self.logger.debug(f"International channels extracted: {len(channels)} countries")
-            else:
-                self.logger.warning(f"No international channels found for {match_detail_url}")
-            
-            return channels
-        
-        except Exception as e:
-            self.logger.error(f"Error fetching international channels from {match_detail_url}: {e}")
-            return {}
-    
-    def _extract_international_channels(self):
-        """
-        从当前页面提取国际频道信息
-        
-        Returns:
-            dict: 按国家分组的频道信息
-                  {'Afghanistan': ['FanCode'], 'Algeria': ['beIN SPORTS CONNECT'], ...}
-        """
-        channels_by_country = {}
-        
-        try:
-            # 查找国际频道容器
-            international_div = self.page.ele('css:#dynamic-international-tv', timeout=5)
-            if not international_div:
-                self.logger.warning("International TV div not found on detail page")
-                return channels_by_country
-            
-            # 查找表格
-            table = international_div.ele('css:table.ichannels', timeout=3)
-            if not table:
-                self.logger.warning("International channels table not found")
-                return channels_by_country
-            
-            # 遍历每一行
-            rows = table.eles('css:tbody tr')
-            for row in rows:
+            for link in channel_links:
                 try:
-                    # 提取国家（从 span.flag 的文本）
-                    country_span = row.ele('css:span.flag', timeout=0.5)
-                    country_name = country_span.text.strip() if country_span else ''
-                    
-                    if not country_name:
+                    channel_name = link.text.strip()
+                    if not channel_name:
                         continue
                     
-                    # 提取该国家的所有频道（从 td a 链接）
-                    channel_links = row.eles('css:td a')
-                    channels = []
-                    for link in channel_links:
-                        channel_name = link.text.strip()
-                        if channel_name:
-                            channels.append(channel_name)
+                    channel_url = link.attr('href') or ''
+                    country = self._infer_country(channel_url, channel_name)
+                    is_streaming = self._is_streaming_channel(channel_name, channel_url)
                     
-                    if channels:
-                        channels_by_country[country_name] = channels
-                
-                except Exception as e:
-                    self.logger.debug(f"Error parsing channel row: {e}")
+                    channels.append({
+                        'name': channel_name,
+                        'country': country,
+                        'type': 'Streaming' if is_streaming else 'TV',
+                        'is_streaming': is_streaming,
+                        'url': channel_url if channel_url.startswith('http') else None
+                    })
+                except:
                     continue
         
         except Exception as e:
-            self.logger.error(f"Error extracting international channels: {e}")
+            self.logger.debug(f"Error extracting channels: {e}")
         
-        return channels_by_country
-
+        return channels
+    
+    def _infer_country(self, url, name):
+        """推断国家"""
+        country_patterns = {
+            'uk': 'UK', 'usa': 'USA', 'espn': 'USA',
+            'espana': 'Spain', 'spain': 'Spain',
+            'deutschland': 'Germany', 'germany': 'Germany',
+            'italia': 'Italy', 'italy': 'Italy',
+            'france': 'France', 'china': 'China',
+        }
+        
+        text = f"{url} {name}".lower()
+        
+        for pattern, country in country_patterns.items():
+            if pattern in text:
+                return country
+        
+        return 'Unknown'
+    
+    def _is_streaming_channel(self, name, url):
+        """判断是否是流媒体"""
+        streaming_keywords = [
+            'stream', 'app', 'online', 'web', 'digital',
+            'espn+', 'dazn', 'paramount+', 'peacock',
+            'youtube', 'prime video', 'netflix'
+        ]
+        
+        text = f"{name} {url}".lower()
+        return any(keyword in text for keyword in streaming_keywords)
+    
     def _get_page_hash(self):
         """获取页面哈希"""
         try:

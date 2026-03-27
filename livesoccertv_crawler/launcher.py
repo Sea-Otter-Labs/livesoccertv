@@ -89,9 +89,12 @@ class CrawlerLauncher:
         )
         
         # 启动爬虫（阻塞）
-        process.start()
-        
-        logger.info(f"Spider completed for {league_config['league_name']}")
+        try:
+            process.start()
+            logger.info(f"Spider completed for {league_config['league_name']}")
+        except Exception as e:
+            logger.error(f"Spider failed for {league_config['league_name']}: {e}")
+            raise
     
     async def run_single(self, league_config_id: Optional[int] = None):
         """
