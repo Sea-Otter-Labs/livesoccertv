@@ -19,6 +19,8 @@ from repo import (
     AlertLogRepository,
 )
 from models import BroadcastMatchStatus, AlertType, Severity
+from config.settings import LARK_WEBHOOK_URL, LARK_SECRET, ALERT_ENABLED
+from services.lark_notifier import AlertNotifier
 
 logger = logging.getLogger(__name__)
 
@@ -242,6 +244,11 @@ class DailyTaskOrchestrator:
         broadcast_repo = MatchBroadcastRepository(session)
         alert_repo = AlertLogRepository(session)
         
+        # 初始化飞书通知器
+        lark_notifier = None
+        if ALERT_ENABLED and LARK_WEBHOOK_URL:
+            lark_notifier = AlertNotifier(webhook_url=LARK_WEBHOOK_URL, secret=LARK_SECRET or None)
+        
         aligned = 0
         unmatched = 0
         ambiguous = 0
@@ -336,7 +343,7 @@ class DailyTaskOrchestrator:
                     await broadcast_repo.create(data)
                 
                 # 创建告警
-                await alert_repo.create({
+                alert_data = {
                     'alert_type': AlertType.UNMATCHED_API_TO_WEB,
                     'severity': Severity.MEDIUM,
                     'league_id': league.api_league_id,
@@ -349,7 +356,23 @@ class DailyTaskOrchestrator:
                     'exception_summary': alignment.reason or 'API 比赛无法在网页数据中找到匹配',
                     'suggested_action': '检查 LiveSoccerTV 页面是否有该比赛',
                     'is_resolved': False
-                })
+                }
+                alert_log = await alert_repo.create(alert_data)
+                
+                # 发送飞书通知
+                if lark_notifier and alert_log:
+                    try:
+                        notified = await lark_notifier.notify_alignment_failure(
+                            alert_log=alert_log,
+                            error_log=alignment.reason
+                        )
+                        if notified:
+                            await alert_repo.mark_as_notified(
+                                alert_log.id,
+                                notification_response="飞书通知已发送"
+                            )
+                    except Exception as e:
+                        logger.error(f"Failed to send Lark notification: {e}")
                 
                 unmatched += 1
                 
@@ -377,7 +400,7 @@ class DailyTaskOrchestrator:
                     await broadcast_repo.create(data)
                 
                 # 创建告警
-                await alert_repo.create({
+                alert_data = {
                     'alert_type': AlertType.AMBIGUOUS_MATCH,
                     'severity': Severity.HIGH,
                     'league_id': league.api_league_id,
@@ -390,7 +413,23 @@ class DailyTaskOrchestrator:
                     'exception_summary': alignment.reason or '存在多个匹配的候选',
                     'suggested_action': '需要人工确认正确匹配',
                     'is_resolved': False
-                })
+                }
+                alert_log = await alert_repo.create(alert_data)
+                
+                # 发送飞书通知
+                if lark_notifier and alert_log:
+                    try:
+                        notified = await lark_notifier.notify_alignment_failure(
+                            alert_log=alert_log,
+                            error_log=alignment.reason
+                        )
+                        if notified:
+                            await alert_repo.mark_as_notified(
+                                alert_log.id,
+                                notification_response="飞书通知已发送"
+                            )
+                    except Exception as e:
+                        logger.error(f"Failed to send Lark notification: {e}")
                 
                 ambiguous += 1
         
