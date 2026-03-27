@@ -7,7 +7,8 @@ from urllib.parse import urljoin, urlparse
 import scrapy
 from scrapy.http import Request
 
-from crawler.items import LiveSoccerTVMatchItem, CrawlTaskItem, CaptchaDetectedItem
+from livesoccertv_crawler.crawler.items import LiveSoccerTVMatchItem, CrawlTaskItem, CaptchaDetectedItem
+from livesoccertv_crawler.crawler.utils.helpers import normalize_team_name, parse_livesoccertv_date, utc_now_timestamp
 
 
 class LiveSoccerTVSpider(scrapy.Spider):
@@ -392,7 +393,6 @@ class LiveSoccerTVSpider(scrapy.Spider):
             channels = self._extract_channels(row)
             
             # 解析时间戳
-            from crawler.utils import parse_livesoccertv_date, normalize_team_name
             timezone_hint = self._get_timezone_hint()
             timestamp = parse_livesoccertv_date(
                 current_date or '',
@@ -539,8 +539,6 @@ class LiveSoccerTVSpider(scrapy.Spider):
         """检查是否超出时间窗口"""
         if not timestamp:
             return False
-        
-        from crawler.utils import utc_now_timestamp
         
         current_time = utc_now_timestamp()
         

@@ -5,6 +5,8 @@ import sys
 from datetime import datetime
 from typing import List, Optional
 
+from livesoccertv_crawler.crawler.spiders.livesoccertv_spider import LiveSoccerTVSpider
+
 workspace_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if workspace_root not in sys.path:
     sys.path.insert(0, workspace_root)
@@ -13,9 +15,7 @@ from scrapy.crawler import CrawlerProcess
 from scrapy.settings import Settings
 
 from config.database import AsyncSessionLocal, init_db, close_db
-from repo import LeagueConfigRepository, CrawlTaskStatusRepository, SystemConfigRepository
-from crawler.settings import BOT_NAME
-from crawler.spiders import LiveSoccerTVSpider
+from repo import LeagueConfigRepository
 
 # 配置日志
 logging.basicConfig(
@@ -38,7 +38,7 @@ class CrawlerLauncher:
     def _init_settings(self):
         """初始化爬虫设置"""
         self.crawler_settings = Settings()
-        self.crawler_settings.setmodule('crawler.settings')
+        self.crawler_settings.setmodule('livesoccertv_crawler.crawler.settings')
     
     async def get_enabled_leagues(self) -> List[dict]:
         """

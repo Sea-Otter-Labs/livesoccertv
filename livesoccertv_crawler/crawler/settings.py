@@ -7,20 +7,20 @@ if project_root not in sys.path:
 
 BOT_NAME = 'livesoccertv_crawler'
 
-SPIDER_MODULES = ['crawler.spiders']
-NEWSPIDER_MODULE = 'crawler.spiders'
+SPIDER_MODULES = ['livesoccertv_crawler.crawler.spiders']
+NEWSPIDER_MODULE = 'livesoccertv_crawler.crawler.spiders'
 
 # 遵守 robots.txt 规则
 ROBOTSTXT_OBEY = False
 
 # 配置管道
 ITEM_PIPELINES = {
-    'crawler.pipelines.match_pipeline.MatchDataPipeline': 300,
+    'livesoccertv_crawler.crawler.pipelines.match_pipeline.MatchDataPipeline': 300,
 }
 
 # 配置中间件
 DOWNLOADER_MIDDLEWARES = {
-    'crawler.middlewares.drission_middleware.DrissionPageMiddleware': 600,
+    'livesoccertv_crawler.crawler.middlewares.drission_middleware.DrissionPageMiddleware': 600,
 }
 
 # 下载延迟（秒）

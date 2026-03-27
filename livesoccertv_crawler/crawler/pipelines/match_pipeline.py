@@ -3,6 +3,8 @@ from datetime import datetime
 import sys
 import os
 
+from livesoccertv_crawler.crawler.items import CaptchaDetectedItem, CrawlTaskItem, LiveSoccerTVMatchItem
+
 workspace_root = os.path.dirname(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 )
@@ -10,7 +12,6 @@ if workspace_root not in sys.path:
     sys.path.insert(0, workspace_root)
 
 from config.database import AsyncSessionLocal
-from crawler.items import LiveSoccerTVMatchItem, CrawlTaskItem, CaptchaDetectedItem
 from models import AlertType, Severity
 from repo.alert_log_repo import AlertLogRepository
 from repo.crawl_task_status_repo import CrawlTaskStatusRepository

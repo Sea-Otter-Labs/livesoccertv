@@ -1,8 +1,3 @@
-"""
-每日任务协调器
-整合 API 同步、网页抓取、比赛对齐的完整流程
-"""
-
 import logging
 from datetime import datetime
 from typing import Dict, Any, List, Optional
@@ -10,6 +5,7 @@ from typing import Dict, Any, List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config.database import AsyncSessionLocal, init_db, close_db
+from livesoccertv_crawler.launcher import CrawlerLauncher
 from services import ApiFootballSyncService
 from repo import (
     LeagueConfigRepository,
@@ -145,10 +141,8 @@ class DailyTaskOrchestrator:
         league_config_id: Optional[int] = None
     ) -> Dict[str, Any]:
         """
-        阶段 2: 网页抓取
         启动 Scrapy 爬虫抓取 LiveSoccerTV 数据
         """
-        from crawler.launcher import CrawlerLauncher
         
         launcher = CrawlerLauncher()
         

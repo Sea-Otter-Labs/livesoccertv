@@ -1,10 +1,12 @@
 import os
 import logging
+import json
 from datetime import datetime
 from typing import Optional
 
 from flask import Flask, jsonify, request
 from asgiref.sync import async_to_sync
+import redis
 
 from config.database import AsyncSessionLocal, init_db, close_db
 from repo import MatchBroadcastRepository, AlertLogRepository, LeagueConfigRepository
@@ -14,6 +16,22 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+
+# Redis 缓存配置
+redis_client = redis.Redis(
+    host=os.getenv('REDIS_HOST', 'localhost'),
+    port=int(os.getenv('REDIS_PORT', 6379)),
+    db=int(os.getenv('REDIS_DB', 0)),
+    password=os.getenv('REDIS_PASSWORD', None),
+    decode_responses=True
+)
+
+# 缓存过期时间（秒）- 1天
+CACHE_TTL = 86400
+
+def get_cache_key(fixture_id: int) -> str:
+    """生成比赛详情缓存键"""
+    return f"match:detail:{fixture_id}"
 
 
 def get_db_session():
@@ -34,11 +52,11 @@ def index():
 @app.route('/api/matches/<int:fixture_id>')
 def get_match_by_fixture_id(fixture_id: int):
     """
-    获取指定比赛的详情和转播信息
-    
+    获取指定比赛的详情和转播信息（带 Redis 缓存）
+
     Path Parameters:
         fixture_id: API-Football fixture ID
-    
+
     Response:
         {
             "fixture_id": 12345,
@@ -61,14 +79,26 @@ def get_match_by_fixture_id(fixture_id: int):
             "last_verified_at": "2024-01-01T12:00:00"
         }
     """
+    cache_key = get_cache_key(fixture_id)
+
+    # 1. 先尝试从 Redis 缓存获取
+    try:
+        cached_data = redis_client.get(cache_key)
+        if cached_data:
+            logger.info(f"Cache hit for match {fixture_id}")
+            return jsonify(json.loads(cached_data))
+    except Exception as e:
+        logger.warning(f"Redis read error: {e}")
+
+    # 2. 缓存未命中，从数据库查询
     async def _fetch():
         async with AsyncSessionLocal() as session:
             repo = MatchBroadcastRepository(session)
             match = await repo.get_by_fixture_id(fixture_id)
-            
+
             if not match:
                 return None
-            
+
             return {
                 'fixture_id': match.fixture_id,
                 'league_id': match.league_id,
@@ -85,15 +115,26 @@ def get_match_by_fixture_id(fixture_id: int):
                 'channels': match.channels,
                 'last_verified_at': match.last_verified_at.isoformat() if match.last_verified_at else None
             }
-    
+
     try:
         result = async_to_sync(_fetch)()
-        
+
         if not result:
             return jsonify({'error': 'Match not found'}), 404
-        
+
+        # 3. 写入 Redis 缓存（1天过期）
+        try:
+            redis_client.setex(
+                cache_key,
+                CACHE_TTL,
+                json.dumps(result, ensure_ascii=False)
+            )
+            logger.info(f"Cache set for match {fixture_id}, TTL={CACHE_TTL}s")
+        except Exception as e:
+            logger.warning(f"Redis write error: {e}")
+
         return jsonify(result)
-    
+
     except Exception as e:
         logger.error(f"Error fetching match {fixture_id}: {e}")
         return jsonify({'error': str(e)}), 500
@@ -409,6 +450,127 @@ def not_found(error):
 def internal_error(error):
     """500 错误处理"""
     return jsonify({'error': 'Internal server error'}), 500
+
+
+# ==================== 缓存手动管理接口 ====================
+
+@app.route('/api/cache/match/<int:fixture_id>', methods=['GET'])
+def get_match_cache(fixture_id: int):
+    """
+    手动查询比赛详情缓存
+
+    GET /api/cache/match/12345
+
+    Response:
+        {
+            "cached": true,
+            "ttl_seconds": 85000,
+            "data": { ... }
+        }
+        或
+        {
+            "cached": false
+        }
+    """
+    cache_key = get_cache_key(fixture_id)
+
+    try:
+        # 检查缓存是否存在
+        ttl = redis_client.ttl(cache_key)
+        if ttl == -2:  # key 不存在
+            return jsonify({'cached': False}), 200
+
+        # 获取缓存数据
+        cached_data = redis_client.get(cache_key)
+        if cached_data:
+            return jsonify({
+                'cached': True,
+                'ttl_seconds': ttl if ttl > 0 else None,
+                'data': json.loads(cached_data)
+            }), 200
+        else:
+            return jsonify({'cached': False}), 200
+
+    except Exception as e:
+        logger.error(f"Error checking cache for match {fixture_id}: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/cache/match/<int:fixture_id>', methods=['DELETE'])
+def delete_match_cache(fixture_id: int):
+    """
+    手动清除指定比赛的缓存
+
+    DELETE /api/cache/match/12345
+
+    Response:
+        {
+            "deleted": true,
+            "message": "Cache cleared for match 12345"
+        }
+        或
+        {
+            "deleted": false,
+            "message": "Cache key not found for match 12345"
+        }
+    """
+    cache_key = get_cache_key(fixture_id)
+
+    try:
+        # 删除缓存
+        deleted = redis_client.delete(cache_key)
+        if deleted > 0:
+            logger.info(f"Cache manually cleared for match {fixture_id}")
+            return jsonify({
+                'deleted': True,
+                'message': f'Cache cleared for match {fixture_id}'
+            }), 200
+        else:
+            return jsonify({
+                'deleted': False,
+                'message': f'Cache key not found for match {fixture_id}'
+            }), 200
+
+    except Exception as e:
+        logger.error(f"Error clearing cache for match {fixture_id}: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/cache/clear', methods=['POST'])
+def clear_all_match_cache():
+    """
+    批量清除所有比赛详情缓存
+
+    POST /api/cache/clear
+
+    Response:
+        {
+            "cleared": true,
+            "deleted_count": 15
+        }
+    """
+    try:
+        # 查找所有比赛详情缓存
+        pattern = 'match:detail:*'
+        cursor = 0
+        deleted_count = 0
+
+        while True:
+            cursor, keys = redis_client.scan(cursor=cursor, match=pattern, count=100)
+            if keys:
+                deleted_count += redis_client.delete(*keys)
+            if cursor == 0:
+                break
+
+        logger.info(f"All match cache manually cleared, deleted {deleted_count} keys")
+        return jsonify({
+            'cleared': True,
+            'deleted_count': deleted_count
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error clearing all match cache: {e}")
+        return jsonify({'error': str(e)}), 500
 
 
 if __name__ == '__main__':
