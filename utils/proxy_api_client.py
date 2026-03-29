@@ -1,9 +1,3 @@
-"""
-911proxy API 客户端
-用于管理代理账户、查询流量、获取代理 IP 等
-API 文档: https://www.911proxy.com/openapi-doc/
-"""
-
 import os
 import logging
 import requests

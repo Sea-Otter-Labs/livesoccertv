@@ -1,4 +1,6 @@
 import logging
+import enum
+import json
 from datetime import datetime
 import sys
 import os
@@ -10,12 +12,6 @@ workspace_root = os.path.dirname(
 )
 if workspace_root not in sys.path:
     sys.path.insert(0, workspace_root)
-
-from config.database import AsyncSessionLocal
-from models import AlertType, Severity
-from repo.alert_log_repo import AlertLogRepository
-from repo.crawl_task_status_repo import CrawlTaskStatusRepository
-from repo.web_crawl_raw_repo import WebCrawlRawRepository
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +30,57 @@ class MatchDataPipeline:
     
     def __init__(self):
         self.batch_stats = {}
+
+    def _normalize_enum_value(self, value):
+        if isinstance(value, enum.Enum):
+            return value.value
+        return value
+
+    def _serialize_for_log(self, value):
+        if isinstance(value, enum.Enum):
+            return value.value
+        if isinstance(value, datetime):
+            return value.isoformat()
+        if isinstance(value, dict):
+            return {key: self._serialize_for_log(val) for key, val in value.items()}
+        if isinstance(value, list):
+            return [self._serialize_for_log(val) for val in value]
+        return value
+
+    def _format_log_payload(self, payload):
+        return json.dumps(self._serialize_for_log(payload), ensure_ascii=False, default=str, sort_keys=True)
+
+    def _build_match_payload(self, item: LiveSoccerTVMatchItem):
+        return {
+            'crawl_batch_id': item.get('crawl_batch_id'),
+            'source_site': item.get('source_site', 'livesoccertv'),
+            'league_config_id': item.get('league_config_id'),
+            'league_name': item.get('league_name'),
+            'match_date_text': item.get('match_date_text'),
+            'match_timestamp_utc': item.get('match_timestamp_utc'),
+            'home_team_name_raw': item.get('home_team_name_raw'),
+            'home_team_name_normalized': item.get('home_team_name_normalized'),
+            'away_team_name_raw': item.get('away_team_name_raw'),
+            'away_team_name_normalized': item.get('away_team_name_normalized'),
+            'channel_list': item.get('channel_list'),
+            'pagination_cursor': item.get('pagination_cursor'),
+            'source_match_text': item.get('source_match_text'),
+            'page_url': item.get('page_url'),
+            'crawled_at': item.get('crawled_at', datetime.utcnow())
+        }
+
+    def _build_task_payload(self, item: CrawlTaskItem):
+        payload = {
+            'crawl_batch_id': item.get('crawl_batch_id'),
+            'league_config_id': item.get('league_config_id'),
+            'task_phase': self._normalize_enum_value(item.get('task_phase')),
+            'status': self._normalize_enum_value(item.get('status')),
+            'current_pagination_cursor': item.get('current_pagination_cursor'),
+            'pagination_direction': self._normalize_enum_value(item.get('pagination_direction')),
+            'matches_crawled': item.get('matches_crawled'),
+            'error_message': item.get('error_message'),
+        }
+        return payload
     
     def open_spider(self, spider):
         """Spider 启动时初始化"""
@@ -81,27 +128,14 @@ class MatchDataPipeline:
     
     async def _save_match(self, item: LiveSoccerTVMatchItem):
         """异步保存比赛数据到数据库"""
+        from config.database import AsyncSessionLocal
+        from repo.web_crawl_raw_repo import WebCrawlRawRepository
+
         async with AsyncSessionLocal() as session:
             repo = WebCrawlRawRepository(session)
-            
-            data = {
-                'crawl_batch_id': item.get('crawl_batch_id'),
-                'source_site': item.get('source_site', 'livesoccertv'),
-                'league_config_id': item.get('league_config_id'),
-                'league_name': item.get('league_name'),
-                'match_date_text': item.get('match_date_text'),
-                'match_timestamp_utc': item.get('match_timestamp_utc'),
-                'home_team_name_raw': item.get('home_team_name_raw'),
-                'home_team_name_normalized': item.get('home_team_name_normalized'),
-                'away_team_name_raw': item.get('away_team_name_raw'),
-                'away_team_name_normalized': item.get('away_team_name_normalized'),
-                'channel_list': item.get('channel_list'),
-                'pagination_cursor': item.get('pagination_cursor'),
-                'source_match_text': item.get('source_match_text'),
-                'page_url': item.get('page_url'),
-                'crawled_at': item.get('crawled_at', datetime.utcnow())
-            }
-            
+            data = self._build_match_payload(item)
+            logger.info("Web crawl raw payload before save: %s", self._format_log_payload(data))
+
             await repo.create(data)
             await session.commit()
     
@@ -117,40 +151,36 @@ class MatchDataPipeline:
     
     async def _update_task_status(self, item: CrawlTaskItem):
         """异步更新任务状态"""
+        from config.database import AsyncSessionLocal
+        from repo.crawl_task_status_repo import CrawlTaskStatusRepository
+
         async with AsyncSessionLocal() as session:
             repo = CrawlTaskStatusRepository(session)
+            payload = self._build_task_payload(item)
+            logger.info("Crawl task payload before save: %s", self._format_log_payload(payload))
             
             # 查找现有任务
             existing = await repo.get_by_batch_and_league(
-                item.get('crawl_batch_id'),
-                item.get('league_config_id')
+                payload['crawl_batch_id'],
+                payload['league_config_id']
             )
             
             if existing:
                 update_data = {
-                    'task_phase': item.get('task_phase'),
-                    'status': item.get('status'),
-                    'current_pagination_cursor': item.get('current_pagination_cursor'),
-                    'pagination_direction': item.get('pagination_direction'),
-                    'matches_crawled': item.get('matches_crawled'),
+                    'task_phase': payload['task_phase'],
+                    'status': payload['status'],
+                    'current_pagination_cursor': payload['current_pagination_cursor'],
+                    'pagination_direction': payload['pagination_direction'],
+                    'matches_crawled': payload['matches_crawled'],
                 }
                 
-                if item.get('error_message'):
-                    update_data['error_message'] = item.get('error_message')
+                if payload.get('error_message'):
+                    update_data['error_message'] = payload['error_message']
                 
                 await repo.update(existing.id, update_data)
             else:
                 # 创建新任务
-                await repo.create({
-                    'crawl_batch_id': item.get('crawl_batch_id'),
-                    'league_config_id': item.get('league_config_id'),
-                    'task_phase': item.get('task_phase'),
-                    'status': item.get('status'),
-                    'current_pagination_cursor': item.get('current_pagination_cursor'),
-                    'pagination_direction': item.get('pagination_direction'),
-                    'matches_crawled': item.get('matches_crawled'),
-                    'error_message': item.get('error_message'),
-                })
+                await repo.create(payload)
             
             await session.commit()
     
@@ -166,6 +196,10 @@ class MatchDataPipeline:
     
     async def _save_captcha_alert(self, item: CaptchaDetectedItem):
         """异步保存验证码告警"""
+        from config.database import AsyncSessionLocal
+        from models import AlertType, Severity
+        from repo.alert_log_repo import AlertLogRepository
+
         async with AsyncSessionLocal() as session:
             repo = AlertLogRepository(session)
             

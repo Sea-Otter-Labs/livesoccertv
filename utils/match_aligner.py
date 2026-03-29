@@ -1,8 +1,3 @@
-"""
-比赛对齐工具
-实现API比赛和网页抓取数据的对齐逻辑
-"""
-
 from typing import List, Optional, Dict, Any, Tuple
 from dataclasses import dataclass
 from enum import Enum

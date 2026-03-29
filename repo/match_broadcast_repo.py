@@ -22,6 +22,60 @@ class MatchBroadcastRepository(BaseRepository[MatchBroadcast]):
             .where(MatchBroadcast.fixture_id == fixture_id)
         )
         return result.scalar_one_or_none()
+
+    async def query_matches(
+        self,
+        league_id: Optional[int] = None,
+        season: Optional[int] = None,
+        date_from: Optional[int] = None,
+        date_to: Optional[int] = None,
+        team_id: Optional[int] = None,
+        status: Optional[str] = None,
+        has_channels: Optional[bool] = None,
+        broadcast_status: Optional[BroadcastMatchStatus] = None,
+    ) -> List[MatchBroadcast]:
+        """按组合条件查询比赛转播信息"""
+        conditions = []
+
+        if league_id is not None:
+            conditions.append(MatchBroadcast.league_id == league_id)
+
+        if season is not None:
+            conditions.append(MatchBroadcast.season == season)
+
+        if date_from is not None:
+            conditions.append(MatchBroadcast.match_timestamp_utc >= date_from)
+
+        if date_to is not None:
+            conditions.append(MatchBroadcast.match_timestamp_utc <= date_to)
+
+        if team_id is not None:
+            conditions.append(
+                or_(
+                    MatchBroadcast.home_team_id == team_id,
+                    MatchBroadcast.away_team_id == team_id,
+                )
+            )
+
+        if status:
+            conditions.append(MatchBroadcast.match_status == status)
+
+        if has_channels is True:
+            conditions.append(MatchBroadcast.channels.isnot(None))
+        elif has_channels is False:
+            conditions.append(MatchBroadcast.channels.is_(None))
+
+        if broadcast_status is not None:
+            conditions.append(MatchBroadcast.broadcast_match_status == broadcast_status)
+
+        query = select(MatchBroadcast)
+        if conditions:
+            query = query.where(and_(*conditions))
+
+        result = await self.session.execute(
+            query.order_by(MatchBroadcast.match_timestamp_utc)
+        )
+        return result.scalars().all()
     
     async def get_by_league_and_season(
         self,
@@ -30,20 +84,11 @@ class MatchBroadcastRepository(BaseRepository[MatchBroadcast]):
         status: Optional[BroadcastMatchStatus] = None
     ) -> List[MatchBroadcast]:
         """获取指定联赛和赛季的比赛转播信息"""
-        query = select(MatchBroadcast).where(
-            and_(
-                MatchBroadcast.league_id == league_id,
-                MatchBroadcast.season == season
-            )
+        return await self.query_matches(
+            league_id=league_id,
+            season=season,
+            broadcast_status=status,
         )
-        
-        if status:
-            query = query.where(MatchBroadcast.broadcast_match_status == status)
-        
-        result = await self.session.execute(
-            query.order_by(MatchBroadcast.match_timestamp_utc)
-        )
-        return result.scalars().all()
     
     async def get_by_status(
         self,
@@ -51,17 +96,10 @@ class MatchBroadcastRepository(BaseRepository[MatchBroadcast]):
         league_id: Optional[int] = None
     ) -> List[MatchBroadcast]:
         """根据对齐状态获取比赛"""
-        query = select(MatchBroadcast).where(
-            MatchBroadcast.broadcast_match_status == status
+        return await self.query_matches(
+            league_id=league_id,
+            broadcast_status=status,
         )
-        
-        if league_id:
-            query = query.where(MatchBroadcast.league_id == league_id)
-        
-        result = await self.session.execute(
-            query.order_by(MatchBroadcast.match_timestamp_utc)
-        )
-        return result.scalars().all()
     
     async def get_by_time_range(
         self,
@@ -71,26 +109,12 @@ class MatchBroadcastRepository(BaseRepository[MatchBroadcast]):
         has_channels: Optional[bool] = None
     ) -> List[MatchBroadcast]:
         """获取时间范围内的比赛"""
-        query = select(MatchBroadcast).where(
-            and_(
-                MatchBroadcast.match_timestamp_utc >= start_timestamp,
-                MatchBroadcast.match_timestamp_utc <= end_timestamp
-            )
+        return await self.query_matches(
+            league_id=league_id,
+            date_from=start_timestamp,
+            date_to=end_timestamp,
+            has_channels=has_channels,
         )
-        
-        if league_id:
-            query = query.where(MatchBroadcast.league_id == league_id)
-        
-        if has_channels is not None:
-            if has_channels:
-                query = query.where(MatchBroadcast.channels.isnot(None))
-            else:
-                query = query.where(MatchBroadcast.channels.is_(None))
-        
-        result = await self.session.execute(
-            query.order_by(MatchBroadcast.match_timestamp_utc)
-        )
-        return result.scalars().all()
     
     async def get_mismatches(
         self,

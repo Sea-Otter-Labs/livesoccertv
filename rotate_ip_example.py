@@ -1,8 +1,3 @@
-"""
-911proxy IP 轮换示例
-演示如何动态切换代理 IP
-"""
-
 import os
 import sys
 import asyncio

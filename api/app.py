@@ -8,6 +8,11 @@ from flask import Flask, jsonify, request
 from asgiref.sync import async_to_sync
 import redis
 
+from api.match_listing import (
+    DEFAULT_MATCH_LIST_LEAGUE_ID,
+    build_list_matches_filters,
+    serialize_match_list_item,
+)
 from config.database import AsyncSessionLocal, init_db, close_db
 from repo import MatchBroadcastRepository, AlertLogRepository, LeagueConfigRepository
 
@@ -146,7 +151,7 @@ def list_matches():
     获取比赛列表
     
     Query Parameters:
-        league_id: 联赛ID (可选)
+        league_id: 联赛ID，默认 140 (可选)
         season: 赛季 (可选)
         date_from: 开始日期 UTC timestamp (可选)
         date_to: 结束日期 UTC timestamp (可选)
@@ -154,89 +159,66 @@ def list_matches():
         status: 比赛状态 (可选)
         has_channels: 是否有频道信息 true/false (可选)
         broadcast_status: 转播状态 matched/unmatched/missing_channels/ambiguous (可选)
-        limit: 返回数量限制，默认 100 (可选)
+        limit: 返回数量限制；不传时返回全部命中结果 (可选)
         offset: 偏移量，默认 0 (可选)
     
     Response:
         {
             "total": 150,
             "offset": 0,
-            "limit": 20,
+            "limit": null,
             "matches": [...]
         }
     """
     async def _fetch():
         async with AsyncSessionLocal() as session:
             repo = MatchBroadcastRepository(session)
-            
-            # 解析查询参数
-            league_id = request.args.get('league_id', type=int)
-            season = request.args.get('season', type=int)
-            date_from = request.args.get('date_from', type=int)
-            date_to = request.args.get('date_to', type=int)
-            team_id = request.args.get('team_id', type=int)
-            status = request.args.get('status')
-            has_channels = request.args.get('has_channels')
-            broadcast_status = request.args.get('broadcast_status')
-            limit = request.args.get('limit', 100, type=int)
-            offset = request.args.get('offset', 0, type=int)
-            
-            # 转换 has_channels
-            if has_channels is not None:
-                has_channels = has_channels.lower() == 'true'
-            
-            # 查询数据
-            if date_from and date_to:
-                matches = await repo.get_by_time_range(
-                    start_timestamp=date_from,
-                    end_timestamp=date_to,
-                    league_id=league_id,
-                    has_channels=True
-                )
-            elif broadcast_status:
+            filters = build_list_matches_filters(request.args)
+
+            broadcast_status = filters['broadcast_status']
+            status_enum = None
+            if broadcast_status:
                 from models import BroadcastMatchStatus
                 status_enum = BroadcastMatchStatus(broadcast_status)
-                matches = await repo.get_by_status(
-                    status=status_enum,
-                    league_id=league_id
-                )
-            else:
-                matches = await repo.get_by_league_and_season(
-                    league_id=league_id or 0,
-                    season=season or 0
-                )
+
+            matches = await repo.query_matches(
+                league_id=filters['league_id'],
+                season=filters['season'],
+                date_from=filters['date_from'],
+                date_to=filters['date_to'],
+                team_id=filters['team_id'],
+                status=filters['status'],
+                has_channels=filters['has_channels'],
+                broadcast_status=status_enum,
+            )
             
             # 分页
             total = len(matches)
-            matches = matches[offset:offset + limit]
+            offset = filters['offset']
+            limit = filters['limit']
+            if limit is not None:
+                matches = matches[offset:offset + limit]
+            elif offset:
+                matches = matches[offset:]
             
             # 转换数据
-            results = []
-            for match in matches:
-                # 提取频道名称并拼接
-                channel_names = ''
-                if match.channels:
-                    names = [ch.get('name') for ch in match.channels if ch.get('name')]
-                    channel_names = ','.join(names)
-
-                results.append({
-                    'fixture_id': match.fixture_id,
-                    'league_id': match.league_id,
-                    'season': match.season,
-                    'match_timestamp_utc': match.match_timestamp_utc,
-                    'match_date': match.match_date.isoformat() if match.match_date else None,
-                    'home_team': match.home_team_name,
-                    'away_team': match.away_team_name,
-                    'status': match.match_status,
-                    'broadcast_match_status': match.broadcast_match_status.value if match.broadcast_match_status else None,
-                    'channels_count': len(match.channels) if match.channels else 0,
-                    'channel_names': channel_names
-                })
+            results = [serialize_match_list_item(match) for match in matches]
             
             return {
                 'total': total,
                 'offset': offset,
                 'limit': limit,
+                'filters': {
+                    'league_id': filters['league_id'],
+                    'season': filters['season'],
+                    'date_from': filters['date_from'],
+                    'date_to': filters['date_to'],
+                    'team_id': filters['team_id'],
+                    'status': filters['status'],
+                    'has_channels': filters['has_channels'],
+                    'broadcast_status': broadcast_status,
+                    'default_league_id': DEFAULT_MATCH_LIST_LEAGUE_ID,
+                },
                 'matches': results
             }
     

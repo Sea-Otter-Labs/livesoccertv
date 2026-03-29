@@ -1,5 +1,6 @@
 import re
 import hashlib
+import json
 import time
 from datetime import datetime
 from urllib.parse import urljoin, urlparse
@@ -645,6 +646,17 @@ class LiveSoccerTVSpider(scrapy.Spider):
             if not international_div:
                 self.logger.warning("International TV div not found on detail page")
                 return channels_by_country
+
+            international_div_html = getattr(international_div, 'html', None)
+            if callable(international_div_html):
+                international_div_html = international_div_html()
+            if not international_div_html:
+                international_div_html = getattr(international_div, 'inner_html', None)
+                if callable(international_div_html):
+                    international_div_html = international_div_html()
+            if not international_div_html:
+                international_div_html = international_div.text
+            self.logger.info("International TV div detail: %s", international_div_html)
             
             # 查找表格（在详情页中）
             table = international_div.ele('css:table.ichannels', timeout=3)
@@ -677,6 +689,11 @@ class LiveSoccerTVSpider(scrapy.Spider):
                 except Exception as e:
                     self.logger.debug(f"Error parsing channel row: {e}")
                     continue
+
+            self.logger.info(
+                "International TV parsed payload: %s",
+                json.dumps(channels_by_country, ensure_ascii=False, sort_keys=True)
+            )
         
         except Exception as e:
             self.logger.error(f"Error extracting international channels: {e}")
