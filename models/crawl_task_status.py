@@ -40,20 +40,10 @@ class CrawlTaskStatus(BaseModel):
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     crawl_batch_id = Column(String(50), nullable=False, comment='抓取批次ID')
     league_config_id = Column(BigInteger, ForeignKey('league_configs.id', ondelete='CASCADE'), nullable=False, comment='联赛配置ID')
-    task_phase = Column(String(50), default=TaskPhase.INIT, comment='任务阶段')
-    # task_phase = Column(
-    #     Enum(TaskPhase, values_callable=lambda obj: [e.value for e in obj]),
-    #     default=TaskPhase.INIT,
-    #     comment='任务阶段'
-    # )
-    status = Column(String(50), default=TaskStatus.PENDING, comment='任务状态')
-    # status = Column(Enum(TaskStatus, values_callable=lambda obj: [e.value for e in obj]),
-    #     default=TaskPhase.INIT,
-    #     comment='任务阶段'
-    # )
+    task_phase = Column(Enum(TaskPhase), default=TaskPhase.INIT, comment='任务阶段')
+    status = Column(Enum(TaskStatus), default=TaskStatus.PENDING, comment='任务状态')
     current_pagination_cursor = Column(String(200), comment='当前分页游标')
-    # pagination_direction = Column(Enum(PaginationDirection), default=PaginationDirection.NONE, comment='当前翻页方向')
-    pagination_direction = Column(String(50), default=PaginationDirection.NONE, comment='当前翻页方向')
+    pagination_direction = Column(Enum(PaginationDirection), default=PaginationDirection.NONE, comment='当前翻页方向')
     window_start_date = Column(Date, comment='时间窗口开始日期')
     window_end_date = Column(Date, comment='时间窗口结束日期')
     matches_crawled = Column(Integer, default=0, comment='已抓取比赛数')

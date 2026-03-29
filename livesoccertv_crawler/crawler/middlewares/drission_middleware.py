@@ -3,6 +3,14 @@ from scrapy.http import HtmlResponse
 from scrapy.exceptions import IgnoreRequest
 from DrissionPage import ChromiumPage, ChromiumOptions
 import logging
+import sys
+import os
+
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+from utils.proxy_manager import get_proxy_manager
 
 logger = logging.getLogger(__name__)
 
@@ -30,21 +38,21 @@ class DrissionPageMiddleware:
         """Spider 启动时初始化浏览器"""
         logger.info(f"Initializing DrissionPage browser for spider: {spider.name}")
         
-        # 配置浏览器选项
         co = ChromiumOptions()
         
-        # 无头模式
         if self.config.get('headless', False):
             co.headless(True)
         
-        # # 窗口大小
-        # window_size = self.config.get('window_size', (1920, 1080))
-        # co.set_argument(f'--window-size={window_size[0]},{window_size[1]}')
+        proxy_manager = get_proxy_manager()
+        if proxy_manager.is_enabled:
+            proxy_config = proxy_manager.get_chromium_proxy_config()
+            if proxy_config:
+                logger.info(f"Configuring proxy: {proxy_config['server']}")
+                co.set_proxy(proxy_config['server'])
+                
+                if 'username' in proxy_config and 'password' in proxy_config:
+                    logger.info("Proxy authentication will be handled by the browser")
         
-        # 禁用自动化检测
-        # co.set_user_agent(self.config.get('user_agent'))
-        
-        # 初始化页面
         try:
             self.page = ChromiumPage(addr_or_opts=co)
             spider.page = self.page

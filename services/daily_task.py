@@ -131,7 +131,7 @@ class DailyTaskOrchestrator:
         """
         results = await self.sync_service.sync_all_enabled_leagues(
             session=session,
-            full_sync=True  # 增量同步
+            full_sync=False  # 增量同步
         )
         
         logger.info(f"API Sync Results:")

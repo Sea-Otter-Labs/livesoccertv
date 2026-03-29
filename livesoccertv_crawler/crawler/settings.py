@@ -54,7 +54,7 @@ DEFAULT_REQUEST_HEADERS = {
 
 # DrissionPage 配置
 DRISSION_PAGE_CONFIG = {
-    'headless': True,  # 开发时设为 False 以便观察，生产可设为 True
+    'headless': False,  # 开发时设为 False 以便观察，生产可设为 True
     'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'window_size': (1920, 1080),
     'timeout': 30,
@@ -133,3 +133,7 @@ MEMUSAGE_ENABLED = False
 EXTENSIONS = {
     'scrapy.extensions.telnet.TelnetConsole': None,
 }
+
+# 代理配置（由环境变量控制）
+# 通过 utils/proxy_manager 自动加载环境变量中的代理配置
+# 环境变量：PROXY_ENABLED, PROXY_HOST, PROXY_PORT, PROXY_USERNAME, PROXY_PASSWORD

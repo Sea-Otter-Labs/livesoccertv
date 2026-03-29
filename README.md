@@ -151,6 +151,126 @@ python api/app.py
 2. 爬虫使用真实浏览器，首次运行可能需要安装 Chromium
 3. 遇到验证码时会自动暂停等待人工处理
 4. 建议在定时任务中运行（如 cron）
+5. **强烈建议配置代理以提升爬取稳定性**（详见 [911proxy 代理配置](#911proxy-代理配置)）
+
+## 911proxy 代理配置
+
+### 为什么需要代理？
+
+- ✅ 避免频繁请求导致 IP 被封禁
+- ✅ 模拟真实用户行为，提升爬取成功率
+- ✅ 支持 IP 自动轮换，降低检测风险
+- ✅ 地理位置定位，访问地区限制内容
+
+### 快速配置
+
+1. **获取 911proxy 账户**
+   - 访问 [911proxy 官网](https://www.911proxy.com/) 注册账户
+   - 购买动态住宅代理套餐（推荐 product_type=9）
+   - 获取 API Key（用于账户管理，可选）
+
+2. **创建代理账户**
+   
+   方式 1：通过控制台
+   ```bash
+   # 登录 911proxy 控制台
+   # 导航到"代理账户管理" -> "添加账户"
+   # 输入用户名和密码，选择套餐类型
+   ```
+   
+   方式 2：使用命令行工具
+   ```bash
+   python manage_proxy_accounts.py create your_username your_password --type 9 --remark "爬虫专用"
+   ```
+
+3. **配置环境变量**
+   
+   编辑 `.env` 文件：
+   ```env
+   # 911proxy 代理配置
+   PROXY_ENABLED=true
+   PROXY_HOST=proxy.911proxy.com
+   PROXY_PORT=8080
+   PROXY_USERNAME=your_username
+   PROXY_PASSWORD=your_password
+   
+   # 911proxy API Key（可选，用于账户管理）
+   PROXY_API_KEY=your_api_key_here
+   ```
+
+4. **测试代理配置**
+   ```bash
+   python tests/test_proxy_manager.py
+   ```
+
+5. **运行爬虫**
+   ```bash
+   # 代理会自动启用（通过 PROXY_ENABLED 控制）
+   python run_daily_task.py
+   ```
+
+### 代理管理工具
+
+查看所有代理账户：
+```bash
+python manage_proxy_accounts.py list
+```
+
+创建新账户：
+```bash
+python manage_proxy_accounts.py create username password --type 9
+```
+
+查看流量统计：
+```bash
+python manage_proxy_accounts.py traffic --username username
+```
+
+获取代理 IP 列表：
+```bash
+python manage_proxy_accounts.py ips --country US --num 10
+```
+
+### 高级用法
+
+- **动态 IP 轮换**：911proxy 自动处理 IP 轮换，无需手动管理
+- **地理位置定位**：支持按国家/州/城市筛选代理 IP
+- **流量监控**：实时查看流量使用情况，避免超额
+- **账户管理**：通过 API 或命令行工具管理多个代理账户
+
+### 常见问题
+
+**Q: 代理连接失败怎么办？**
+- 检查 `.env` 配置是否正确
+- 确认代理账户状态是否为"启用"
+- 查看流量是否已用完
+- 尝试使用 911proxy 提供的其他代理网关地址
+
+**Q: 如何临时禁用代理？**
+```bash
+# 在 .env 文件中设置
+PROXY_ENABLED=false
+```
+
+**Q: 如何查看代理是否生效？**
+```bash
+python tests/example_proxy_usage.py
+```
+
+**Q: 支持哪些代理类型？**
+- 动态住宅代理（product_type=9, 11）：IP 自动轮换，适合爬虫
+- 静态住宅代理（product_type=25）：固定 IP，适合需要稳定 IP 的场景
+- 数据中心代理（product_type=14）：速度快但容易被识别
+
+### 相关文件
+
+- `utils/proxy_manager.py` - 代理配置管理器
+- `utils/proxy_api_client.py` - 911proxy API 客户端
+- `manage_proxy_accounts.py` - 代理账户管理脚本
+- `tests/test_proxy_manager.py` - 代理功能测试
+- `tests/example_proxy_usage.py` - 使用示例
+- `config/settings.py` - 代理配置项
+- `.env.example` - 环境变量示例
 
 ## 开发调试
 

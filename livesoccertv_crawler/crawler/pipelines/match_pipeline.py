@@ -35,18 +35,17 @@ class MatchDataPipeline:
     def __init__(self):
         self.batch_stats = {}
     
-    def open_spider(self):
+    def open_spider(self, spider):
         """Spider 启动时初始化"""
-        spider = self.crawler.spider
+        logger.info(f"Pipeline opened for spider: {spider.name}")
         logger.info(f"Pipeline opened for spider: {spider.name}")
         self.batch_stats[spider.name] = {
             'matches_saved': 0,
             'errors': 0
         }
     
-    def close_spider(self):
+    def close_spider(self, spider):
         """Spider 关闭时输出统计"""
-        spider = self.crawler.spider
         stats = self.batch_stats.get(spider.name, {})
         logger.info(
             f"Pipeline closed for spider: {spider.name}. "

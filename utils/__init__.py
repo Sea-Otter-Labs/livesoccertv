@@ -33,6 +33,22 @@ from utils.match_aligner import (
     align_matches
 )
 
+from utils.proxy_manager import (
+    get_proxy_manager,
+    is_proxy_enabled,
+    get_proxy_url,
+    get_proxy_for_chromium,
+    get_proxy_for_requests,
+    get_proxy_for_aiohttp,
+    ProxyManager,
+    ProxyConfig
+)
+
+from utils.proxy_api_client import (
+    get_911_api_client,
+    Proxy911APIClient
+)
+
 __all__ = [
     # Team normalizer
     'normalize_team_name',
@@ -61,4 +77,18 @@ __all__ = [
     'MatchAlignment',
     'MatchAligner',
     'align_matches',
+    
+    # Proxy manager
+    'get_proxy_manager',
+    'is_proxy_enabled',
+    'get_proxy_url',
+    'get_proxy_for_chromium',
+    'get_proxy_for_requests',
+    'get_proxy_for_aiohttp',
+    'ProxyManager',
+    'ProxyConfig',
+    
+    # Proxy API client
+    'get_911_api_client',
+    'Proxy911APIClient',
 ]

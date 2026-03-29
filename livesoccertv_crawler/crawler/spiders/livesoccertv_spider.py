@@ -524,6 +524,9 @@ class LiveSoccerTVSpider(scrapy.Spider):
             match_elem = row.ele('css:td#match a', timeout=0.5)
             match_text = match_elem.text.strip() if match_elem else ''
             match_detail_url = match_elem.attr('href') if match_elem else ''
+            self.logger.info(f"[DEBUG] Extracted match_detail_url: {match_detail_url}")
+            self.logger.info(f"[DEBUG] match_elem found: {match_elem is not None}")
+            self.logger.info(f"match_detail_url现在是:{match_detail_url}")
             
             home_team, away_team = self._split_match_teams(match_text)
             
@@ -588,6 +591,7 @@ class LiveSoccerTVSpider(scrapy.Spider):
                   {'Afghanistan': ['FanCode'], 'Algeria': ['beIN SPORTS CONNECT'], ...}
                   如果获取失败，返回空字典 {}
         """
+        self.logger.info(f"[DEBUG] _fetch_international_channels called with URL: {match_detail_url}")
         if not match_detail_url:
             return {}
         
@@ -605,8 +609,8 @@ class LiveSoccerTVSpider(scrapy.Spider):
             # time.sleep(1)
             detail_page.ele('css:#dynamic-international-tv table.ichannels', timeout=5)
             
-            # 提取国际频道
-            channels = self._extract_international_channels()
+            # 提取国际频道（传递 detail_page）
+            channels = self._extract_international_channels(detail_page)
             
             # 关闭标签页
             detail_page.close()
@@ -622,9 +626,12 @@ class LiveSoccerTVSpider(scrapy.Spider):
             self.logger.error(f"Error fetching international channels from {match_detail_url}: {e}")
             return {}
     
-    def _extract_international_channels(self):
+    def _extract_international_channels(self, detail_page):
         """
-        从当前页面提取国际频道信息
+        从详情页提取国际频道信息
+        
+        Args:
+            detail_page: 详情页的 DrissionPage 对象
         
         Returns:
             dict: 按国家分组的频道信息
@@ -633,13 +640,13 @@ class LiveSoccerTVSpider(scrapy.Spider):
         channels_by_country = {}
         
         try:
-            # 查找国际频道容器
-            international_div = self.page.ele('css:#dynamic-international-tv', timeout=5)
+            # 查找国际频道容器（在详情页中查找）
+            international_div = detail_page.ele('css:#dynamic-international-tv', timeout=5)
             if not international_div:
                 self.logger.warning("International TV div not found on detail page")
                 return channels_by_country
             
-            # 查找表格
+            # 查找表格（在详情页中）
             table = international_div.ele('css:table.ichannels', timeout=3)
             if not table:
                 self.logger.warning("International channels table not found")
