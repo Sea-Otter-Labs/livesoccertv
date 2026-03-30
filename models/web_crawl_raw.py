@@ -1,4 +1,4 @@
-from sqlalchemy import Column, BigInteger, Integer, String, JSON, Text, ForeignKey, Index, DateTime
+from sqlalchemy import Column, BigInteger, Integer, String, JSON, Text, ForeignKey, Index, DateTime, Date, UniqueConstraint
 from sqlalchemy.orm import relationship
 from models.base import BaseModel
 
@@ -15,6 +15,7 @@ class WebCrawlRaw(BaseModel):
     league_name = Column(String(100), nullable=False, comment='联赛名称(网页原始)')
     match_date_text = Column(String(100), comment='比赛日期原始文本')
     match_timestamp_utc = Column(Integer, comment='比赛时间 UTC 时间戳(秒)')
+    match_date = Column(Date, comment='比赛日期(用于唯一键)')
     home_team_name_raw = Column(String(100), nullable=False, comment='主队名称原始文本')
     home_team_name_normalized = Column(String(100), comment='主队名称(标准化后)')
     away_team_name_raw = Column(String(100), nullable=False, comment='客队名称原始文本')
@@ -36,6 +37,11 @@ class WebCrawlRaw(BaseModel):
         Index('idx_match_time', 'match_timestamp_utc'),
         Index('idx_crawled_at', 'crawled_at'),
         Index('idx_source_site', 'source_site'),
+        UniqueConstraint(
+            'league_config_id', 'home_team_name_normalized', 
+            'away_team_name_normalized', 'match_date',
+            name='uq_match_identity'
+        ),
         {'comment': 'LiveSoccerTV 网页抓取原始数据表'}
     )
     

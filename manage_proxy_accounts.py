@@ -209,7 +209,11 @@ def get_proxy_ips(country: str = None, num: int = 10):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='911proxy 代理账户管理工具')
+    parser = argparse.ArgumentParser(
+        description='911proxy 代理账户管理工具',
+        epilog='注意：此工具仅用于管理 911proxy 账户（需要 API Key）。\n'
+               '运行时代理功能不依赖此工具，直接使用 PROXY_USERNAME/PROXY_PASSWORD 即可。'
+    )
     
     subparsers = parser.add_subparsers(dest='command', help='可用命令')
     
@@ -248,9 +252,19 @@ def main():
         return
     
     api_client = get_911_api_client()
-    if not api_client.api_key:
-        print("错误: 未配置 911proxy API Key")
-        print("请在 .env 文件中设置 PROXY_API_KEY")
+    if not api_client.is_available:
+        print("\n" + "="*60)
+        print("⚠️  未配置 911proxy API Key")
+        print("="*60)
+        print("\n此工具用于管理 911proxy 账户（创建、删除、查询流量等），")
+        print("需要配置 API Key 才能使用。")
+        print("\n请在 .env 文件中设置：")
+        print("  PROXY_API_KEY=your_app_key_here")
+        print("\n注意：")
+        print("  - 运行时代理功能不依赖 API Key")
+        print("  - 只要配置了 PROXY_USERNAME/PROXY_PASSWORD，爬虫就能正常工作")
+        print("  - API Key 仅用于账户管理功能")
+        print("="*60 + "\n")
         return
     
     if args.command == 'list':

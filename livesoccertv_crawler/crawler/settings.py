@@ -133,7 +133,3 @@ MEMUSAGE_ENABLED = False
 EXTENSIONS = {
     'scrapy.extensions.telnet.TelnetConsole': None,
 }
-
-# 代理配置（由环境变量控制）
-# 通过 utils/proxy_manager 自动加载环境变量中的代理配置
-# 环境变量：PROXY_ENABLED, PROXY_HOST, PROXY_PORT, PROXY_USERNAME, PROXY_PASSWORD

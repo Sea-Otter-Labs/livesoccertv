@@ -1,17 +1,15 @@
 from typing import List, Optional, Dict, Any, Tuple
 from dataclasses import dataclass
-from enum import Enum
 
 from utils.team_normalizer import normalize_team_name
 from utils.time_utils import TimeMatcher
 
 
-class MatchResult(Enum):
-    """对齐结果枚举"""
-    MATCHED = 'matched'
-    UNMATCHED = 'unmatched'
-    AMBIGUOUS = 'ambiguous'
-    MISSING_CHANNELS = 'missing_channels'
+# 对齐结果常量
+MATCHED = 'matched'
+UNMATCHED = 'unmatched'
+AMBIGUOUS = 'ambiguous'
+MISSING_CHANNELS = 'missing_channels'
 
 
 @dataclass
@@ -29,9 +27,10 @@ class MatchAlignment:
     """对齐结果"""
     fixture_id: int
     web_crawl_raw_id: Optional[int]
-    result: MatchResult
+    result: str
     confidence: float
     channels: Optional[List[Dict]]
+    match_timestamp_utc: Optional[int] = None
     reason: Optional[str] = None
 
 
@@ -79,9 +78,10 @@ class MatchAligner:
             return MatchAlignment(
                 fixture_id=fixture_id,
                 web_crawl_raw_id=None,
-                result=MatchResult.UNMATCHED,
+                result=UNMATCHED,
                 confidence=0.0,
                 channels=None,
+                match_timestamp_utc=None,
                 reason='API数据不完整'
             )
         
@@ -96,9 +96,10 @@ class MatchAligner:
             return MatchAlignment(
                 fixture_id=fixture_id,
                 web_crawl_raw_id=None,
-                result=MatchResult.UNMATCHED,
+                result=UNMATCHED,
                 confidence=0.0,
                 channels=None,
+                match_timestamp_utc=api_time,
                 reason='无时间匹配候选'
             )
         
@@ -131,9 +132,10 @@ class MatchAligner:
             return MatchAlignment(
                 fixture_id=fixture_id,
                 web_crawl_raw_id=None,
-                result=MatchResult.UNMATCHED,
+                result=UNMATCHED,
                 confidence=0.0,
                 channels=None,
+                match_timestamp_utc=api_time,
                 reason='无球队匹配'
             )
         
@@ -150,9 +152,10 @@ class MatchAligner:
                 return MatchAlignment(
                     fixture_id=fixture_id,
                     web_crawl_raw_id=None,
-                    result=MatchResult.AMBIGUOUS,
+                    result=AMBIGUOUS,
                     confidence=top_confidence,
                     channels=None,
+                    match_timestamp_utc=api_time,
                     reason=f'存在多个高置信度匹配: {top_confidence:.2f} vs {second_confidence:.2f}'
                 )
         
@@ -163,9 +166,10 @@ class MatchAligner:
             return MatchAlignment(
                 fixture_id=fixture_id,
                 web_crawl_raw_id=None,
-                result=MatchResult.UNMATCHED,
+                result=UNMATCHED,
                 confidence=best_match['confidence'],
                 channels=None,
+                match_timestamp_utc=api_time,
                 reason=f'置信度低于阈值: {best_match["confidence"]:.2f}'
             )
         
@@ -173,7 +177,7 @@ class MatchAligner:
         channels = best_match['candidate'].get('channel_list')
         has_channels = channels and len(channels) > 0
         
-        result = MatchResult.MATCHED if has_channels else MatchResult.MISSING_CHANNELS
+        result = MATCHED if has_channels else MISSING_CHANNELS
         
         return MatchAlignment(
             fixture_id=fixture_id,
@@ -181,6 +185,7 @@ class MatchAligner:
             result=result,
             confidence=best_match['confidence'],
             channels=channels if has_channels else None,
+            match_timestamp_utc=api_time,
             reason=None if has_channels else '缺少频道信息'
         )
     

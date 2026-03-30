@@ -3,12 +3,12 @@ from datetime import date
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, desc
 from repo.base_repo import BaseRepository
-from models.crawl_task_status import CrawlTaskStatus, TaskPhase, TaskStatus
+from models.crawl_task_status import CrawlTaskStatus
 
 
 class CrawlTaskStatusRepository(BaseRepository[CrawlTaskStatus]):
     """抓取任务状态数据访问层"""
-    
+
     def __init__(self, session: AsyncSession):
         super().__init__(session, CrawlTaskStatus)
     
@@ -54,7 +54,7 @@ class CrawlTaskStatusRepository(BaseRepository[CrawlTaskStatus]):
     
     async def get_by_status(
         self,
-        status: TaskStatus
+        status: str
     ) -> List[CrawlTaskStatus]:
         """根据状态获取任务"""
         result = await self.session.execute(
@@ -66,7 +66,7 @@ class CrawlTaskStatusRepository(BaseRepository[CrawlTaskStatus]):
     
     async def get_by_phase(
         self,
-        phase: TaskPhase
+        phase: str
     ) -> List[CrawlTaskStatus]:
         """根据阶段获取任务"""
         result = await self.session.execute(
@@ -98,14 +98,14 @@ class CrawlTaskStatusRepository(BaseRepository[CrawlTaskStatus]):
         """获取正在运行的任务"""
         result = await self.session.execute(
             select(CrawlTaskStatus)
-            .where(CrawlTaskStatus.status == TaskStatus.RUNNING)
+            .where(CrawlTaskStatus.status == 'running')
         )
         return result.scalars().all()
     
     async def update_phase(
         self,
         task_id: int,
-        phase: TaskPhase
+        phase: str
     ) -> Optional[CrawlTaskStatus]:
         """更新任务阶段"""
         return await self.update(task_id, {'task_phase': phase})
@@ -113,15 +113,15 @@ class CrawlTaskStatusRepository(BaseRepository[CrawlTaskStatus]):
     async def update_status(
         self,
         task_id: int,
-        status: TaskStatus,
+        status: str,
         error_message: Optional[str] = None
     ) -> Optional[CrawlTaskStatus]:
         """更新任务状态"""
         update_data = {'status': status}
-        
+
         if error_message:
             update_data['error_message'] = error_message
-        
+
         return await self.update(task_id, update_data)
     
     async def update_pagination(
@@ -186,10 +186,10 @@ class CrawlTaskStatusRepository(BaseRepository[CrawlTaskStatus]):
     ) -> Optional[CrawlTaskStatus]:
         """完成任务"""
         from datetime import datetime
-        
+
         return await self.update(task_id, {
-            'task_phase': TaskPhase.COMPLETED,
-            'status': TaskStatus.SUCCESS,
+            'task_phase': 'completed',
+            'status': 'success',
             'completed_at': datetime.now()
         })
     
@@ -200,10 +200,10 @@ class CrawlTaskStatusRepository(BaseRepository[CrawlTaskStatus]):
     ) -> Optional[CrawlTaskStatus]:
         """标记任务失败"""
         from datetime import datetime
-        
+
         return await self.update(task_id, {
-            'task_phase': TaskPhase.FAILED,
-            'status': TaskStatus.FAILED,
+            'task_phase': 'failed',
+            'status': 'failed',
             'error_message': error_message,
             'completed_at': datetime.now()
         })
@@ -215,13 +215,13 @@ class CrawlTaskStatusRepository(BaseRepository[CrawlTaskStatus]):
     ) -> CrawlTaskStatus:
         """获取或创建任务状态"""
         existing = await self.get_by_batch_and_league(batch_id, league_config_id)
-        
+
         if existing:
             return existing
-        
+
         return await self.create({
             'crawl_batch_id': batch_id,
             'league_config_id': league_config_id,
-            'task_phase': TaskPhase.INIT,
-            'status': TaskStatus.PENDING
+            'task_phase': 'init',
+            'status': 'pending'
         })

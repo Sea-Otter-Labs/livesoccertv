@@ -8,9 +8,8 @@ from urllib.parse import urljoin, urlparse
 import scrapy
 from scrapy.http import Request
 
-from livesoccertv_crawler.crawler.items import LiveSoccerTVMatchItem, CrawlTaskItem, CaptchaDetectedItem
-from livesoccertv_crawler.crawler.utils.helpers import normalize_team_name, parse_livesoccertv_date, utc_now_timestamp
-from models.crawl_task_status import TaskPhase, TaskStatus
+from crawler.items import LiveSoccerTVMatchItem, CrawlTaskItem, CaptchaDetectedItem
+from crawler.utils.helpers import normalize_team_name, parse_livesoccertv_date, utc_now_timestamp
 
 
 class LiveSoccerTVSpider(scrapy.Spider):
@@ -29,8 +28,8 @@ class LiveSoccerTVSpider(scrapy.Spider):
         self.league_name = kwargs.get('league_name')
         self.start_url = kwargs.get('start_url')
         self.crawl_batch_id = kwargs.get('crawl_batch_id')
-        self.history_days = int(kwargs.get('history_days', 7))
-        self.future_days = int(kwargs.get('future_days', 7))
+        self.history_days = int(kwargs.get('history_days') or 7)
+        self.future_days = int(kwargs.get('future_days') or 7)
         self.country = kwargs.get('country', '')
         
         # 内部状态
@@ -89,12 +88,11 @@ class LiveSoccerTVSpider(scrapy.Spider):
         
         # 更新任务状态为爬取中
         yield self._create_task_item(
-            task_phase=TaskPhase.WEB_CRAWL,
-            status=TaskStatus.RUNNING,
+            task_phase='web_crawl',
+            status='running',
             matches_crawled=self.matches_crawled
         )
         
-        # ===== 测试模式：只抓取当前页 =====
         matches = self._parse_current_page(response.url)
         for match_data in matches:
             yield self._create_match_item(match_data)
@@ -103,28 +101,28 @@ class LiveSoccerTVSpider(scrapy.Spider):
         self.logger.info(f"Current page: {len(matches)} matches extracted")
         
         # ===== 以下翻页逻辑已注释（测试模式）=====
-        # # 2. 向左翻页抓历史
-        # left_matches = self._crawl_pagination('left')
-        # for match_data in left_matches:
-        #     yield self._create_match_item(match_data)
-        #     self.matches_crawled += 1
+        # 2. 向左翻页抓历史
+        left_matches = self._crawl_pagination('left')
+        for match_data in left_matches:
+            yield self._create_match_item(match_data)
+            self.matches_crawled += 1
         
-        # # 3. 回到起始页
-        # self.page.get(self.start_url)
-        # self.page.wait.doc_loaded(timeout=20)
-        # self.visited_cursors.clear()
+        # 3. 回到起始页
+        self.page.get(self.start_url)
+        self.page.wait.doc_loaded(timeout=20)
+        self.visited_cursors.clear()
         
-        # # 4. 向右翻页抓未来
-        # right_matches = self._crawl_pagination('right')
-        # for match_data in right_matches:
-        #     yield self._create_match_item(match_data)
-        #     self.matches_crawled += 1
+        # 4. 向右翻页抓未来
+        right_matches = self._crawl_pagination('right')
+        for match_data in right_matches:
+            yield self._create_match_item(match_data)
+            self.matches_crawled += 1
         # ===== 翻页逻辑注释结束 =====
         
         # 完成任务
         yield self._create_task_item(
-            task_phase=TaskPhase.COMPLETED,
-            status=TaskStatus.SUCCESS,
+            task_phase='completed',
+            status='success',
             matches_crawled=self.matches_crawled
         )
         

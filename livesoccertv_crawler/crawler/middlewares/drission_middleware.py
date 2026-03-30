@@ -3,12 +3,6 @@ from scrapy.http import HtmlResponse
 from scrapy.exceptions import IgnoreRequest
 from DrissionPage import ChromiumPage, ChromiumOptions
 import logging
-import sys
-import os
-
-project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
 
 from utils.proxy_manager import get_proxy_manager
 
@@ -43,15 +37,26 @@ class DrissionPageMiddleware:
         if self.config.get('headless', False):
             co.headless(True)
         
+        # 检测并配置代理（运行时，不依赖 API）
         proxy_manager = get_proxy_manager()
+        use_proxy = False
+        
         if proxy_manager.is_enabled:
+            logger.info("Testing proxy connectivity...")
+            success, result = proxy_manager.test_proxy_connectivity()
+            
+            if success:
+                logger.info(f"Proxy test passed, IP: {result}")
+                use_proxy = True
+            else:
+                logger.warning(f"Proxy test failed: {result}")
+                logger.warning("Falling back to no proxy mode")
+        
+        if use_proxy:
             proxy_config = proxy_manager.get_chromium_proxy_config()
             if proxy_config:
-                logger.info(f"Configuring proxy: {proxy_config['server']}")
+                logger.info("Configuring browser with proxy")
                 co.set_proxy(proxy_config['server'])
-                
-                if 'username' in proxy_config and 'password' in proxy_config:
-                    logger.info("Proxy authentication will be handled by the browser")
         
         try:
             self.page = ChromiumPage(addr_or_opts=co)

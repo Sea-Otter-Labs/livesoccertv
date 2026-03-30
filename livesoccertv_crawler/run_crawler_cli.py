@@ -70,8 +70,8 @@ def test():
     "-a", "league_name=La Liga",
     "-a", "start_url=https://www.livesoccertv.com/competitions/spain/primera-division/",
     "-a", "crawl_batch_id=batch_1_xxx",
-    "-a", "history_days=7",
-    "-a", "future_days=7",
+    "-a", "history_days=300",
+    "-a", "future_days=120",
     "-a", "country=Spain",
 ], cwd="livesoccertv_crawler")
 

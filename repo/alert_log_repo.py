@@ -1,12 +1,8 @@
-"""
-告警记录 Repository
-"""
-
 from typing import List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, desc
 from repo.base_repo import BaseRepository
-from models.alert_log import AlertLog, AlertType, Severity
+from models.alert_log import AlertLog
 
 
 class AlertLogRepository(BaseRepository[AlertLog]):
@@ -17,8 +13,8 @@ class AlertLogRepository(BaseRepository[AlertLog]):
     
     async def get_unresolved(
         self,
-        alert_type: Optional[AlertType] = None,
-        severity: Optional[Severity] = None
+        alert_type: Optional[str] = None,
+        severity: Optional[str] = None
     ) -> List[AlertLog]:
         """获取未解决的告警"""
         query = select(AlertLog).where(AlertLog.is_resolved == False)
@@ -36,7 +32,7 @@ class AlertLogRepository(BaseRepository[AlertLog]):
     
     async def get_by_type(
         self,
-        alert_type: AlertType,
+        alert_type: str,
         is_resolved: Optional[bool] = None
     ) -> List[AlertLog]:
         """根据告警类型获取记录"""
@@ -115,7 +111,7 @@ class AlertLogRepository(BaseRepository[AlertLog]):
     
     async def exists_similar_alert(
         self,
-        alert_type: AlertType,
+        alert_type: str,
         fixture_id: Optional[int] = None,
         hours_window: int = 24
     ) -> bool:

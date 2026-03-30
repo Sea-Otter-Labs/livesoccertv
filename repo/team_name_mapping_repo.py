@@ -1,12 +1,8 @@
-"""
-球队名称映射 Repository
-"""
-
 from typing import List, Optional, Set
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_
 from repo.base_repo import BaseRepository
-from models.team_name_mapping import TeamNameMapping, AliasType
+from models.team_name_mapping import TeamNameMapping
 
 
 class TeamNameMappingRepository(BaseRepository[TeamNameMapping]):
@@ -102,7 +98,7 @@ class TeamNameMappingRepository(BaseRepository[TeamNameMapping]):
         normalized_name: str,
         alias_name: str,
         api_team_id: Optional[int] = None,
-        alias_type: AliasType = AliasType.COMMON
+        alias_type: str = 'common'
     ) -> TeamNameMapping:
         """添加新的名称映射"""
         # 检查是否已存在

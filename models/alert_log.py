@@ -1,37 +1,16 @@
-
-from sqlalchemy import Column, BigInteger, Integer, String, Text, Boolean, ForeignKey, Index, Enum, DateTime
+from sqlalchemy import Column, BigInteger, Integer, String, Text, Boolean, ForeignKey, Index, DateTime
 from sqlalchemy.orm import relationship
 from models.base import BaseModel
-import enum
-
-
-class AlertType(enum.Enum):
-    """告警类型枚举"""
-    UNMATCHED_WEB_TO_API = 'unmatched_web_to_api'
-    UNMATCHED_API_TO_WEB = 'unmatched_api_to_web'
-    MISSING_CHANNELS = 'missing_channels'
-    AMBIGUOUS_MATCH = 'ambiguous_match'
-    CAPTCHA_BLOCKED = 'captcha_blocked'
-    PARSE_ERROR = 'parse_error'
-    SYSTEM_ERROR = 'system_error'
-
-
-class Severity(enum.Enum):
-    """严重等级枚举"""
-    CRITICAL = 'critical'
-    HIGH = 'high'
-    MEDIUM = 'medium'
-    LOW = 'low'
 
 
 class AlertLog(BaseModel):
     """告警记录表 - 用于追踪对齐失败、抓取异常等"""
-    
+
     __tablename__ = 'alert_logs'
-    
+
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    alert_type = Column(Enum(AlertType), nullable=False, comment='告警类型')
-    severity = Column(Enum(Severity), default=Severity.MEDIUM, comment='严重等级')
+    alert_type = Column(String(50), nullable=False, comment='告警类型')
+    severity = Column(String(20), default='medium', comment='严重等级')
     league_id = Column(Integer, comment='联赛ID')
     league_name = Column(String(100), comment='联赛名称')
     season = Column(Integer, comment='赛季')
@@ -64,4 +43,4 @@ class AlertLog(BaseModel):
     )
     
     def __repr__(self):
-        return f"<AlertLog(id={self.id}, type={self.alert_type.value}, severity={self.severity.value})>"
+        return f"<AlertLog(id={self.id}, type={self.alert_type}, severity={self.severity})>"

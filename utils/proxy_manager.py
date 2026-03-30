@@ -1,6 +1,7 @@
 import os
 import logging
-from typing import Optional, Dict, Any
+import requests
+from typing import Optional, Dict, Any, Tuple
 from dataclasses import dataclass
 from urllib.parse import quote
 
@@ -53,6 +54,20 @@ class ProxyManager:
     """
     代理管理器
     负责加载、验证和管理代理配置
+    
+    注意：此管理器仅用于 RUNTIME 代理（爬虫运行时），
+    不依赖 911proxy API Key。如果需要管理功能（创建账户等），
+    请使用 proxy_api_client.Proxy911APIClient。
+    
+    运行时配置：
+    - PROXY_ENABLED: 是否启用代理
+    - PROXY_HOST: 代理服务器地址（如 eu.911proxy.net）
+    - PROXY_PORT: 代理端口（如 2600）
+    - PROXY_USERNAME: 代理用户名
+    - PROXY_PASSWORD: 代理密码
+    
+    这些配置与 API Key 无关，即使 API Key 过期，
+    只要账户密码有效，代理仍可正常使用。
     """
     
     def __init__(self):
@@ -112,6 +127,8 @@ class ProxyManager:
         """
         获取适用于 Chromium 的代理配置
         
+        Chromium/DrissionPage 支持格式: http://user:pass@host:port
+        
         Returns:
             Chromium 代理配置字典
         """
@@ -120,13 +137,15 @@ class ProxyManager:
         
         config = self.config
         
-        proxy_config = {
-            'server': f"{config.host}:{config.port}",
-        }
-        
+        # Chromium 支持 http://user:pass@host:port 格式
         if config.username and config.password:
-            proxy_config['username'] = config.username
-            proxy_config['password'] = config.password
+            encoded_username = quote(config.username, safe='')
+            encoded_password = quote(config.password, safe='')
+            server = f"http://{encoded_username}:{encoded_password}@{config.host}:{config.port}"
+        else:
+            server = f"http://{config.host}:{config.port}"
+        
+        proxy_config = {'server': server}
         
         logger.debug(f"Chromium proxy config: server={config.host}:{config.port}")
         return proxy_config
@@ -215,6 +234,76 @@ class ProxyManager:
             status['username_masked'] = f"{config.username[:2]}***" if len(config.username) > 2 else "***"
         
         return status
+    
+    def test_proxy_connectivity(
+        self, 
+        test_url: str = "https://httpbin.org/ip", 
+        timeout: int = 10
+    ) -> Tuple[bool, str]:
+        """
+        测试代理连通性
+        
+        Args:
+            test_url: 测试 URL，默认使用 httpbin.org/ip
+            timeout: 超时时间（秒）
+            
+        Returns:
+            (是否成功, 错误信息或检测到的IP地址)
+        """
+        if not self.is_enabled:
+            return False, "Proxy is not enabled"
+        
+        config = self.config
+        
+        try:
+            proxies = self.get_requests_proxy()
+            
+            if not proxies:
+                return False, "Failed to build proxy configuration"
+            
+            logger.info(f"Testing proxy connectivity: {config.host}:{config.port}")
+            
+            response = requests.get(
+                test_url,
+                proxies=proxies,
+                timeout=timeout,
+                verify=True
+            )
+            
+            if response.status_code == 200:
+                try:
+                    data = response.json()
+                    ip = data.get('origin', 'unknown')
+                    logger.info(f"Proxy test successful, detected IP: {ip}")
+                    return True, ip
+                except Exception:
+                    logger.info("Proxy test successful (response not JSON)")
+                    return True, "success"
+            else:
+                error_msg = f"HTTP {response.status_code}"
+                logger.warning(f"Proxy test failed: {error_msg}")
+                return False, error_msg
+                
+        except requests.exceptions.ProxyError as e:
+            error_msg = f"Proxy error: {str(e)[:100]}"
+            logger.warning(f"Proxy test failed: {error_msg}")
+            return False, error_msg
+        except requests.exceptions.ConnectTimeout:
+            error_msg = "Connection timeout"
+            logger.warning(f"Proxy test failed: {error_msg}")
+            return False, error_msg
+        except requests.exceptions.Timeout:
+            error_msg = "Request timeout"
+            logger.warning(f"Proxy test failed: {error_msg}")
+            return False, error_msg
+        except requests.exceptions.ConnectionError as e:
+            error_msg = f"Connection error: {str(e)[:100]}"
+            logger.warning(f"Proxy test failed: {error_msg}")
+            return False, error_msg
+        except Exception as e:
+            error_msg = f"Unexpected error: {str(e)[:100]}"
+            logger.error(f"Proxy test failed: {error_msg}")
+            return False, error_msg
 
 
 _proxy_manager_instance: Optional[ProxyManager] = None

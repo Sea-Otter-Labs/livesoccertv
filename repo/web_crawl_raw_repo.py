@@ -1,10 +1,8 @@
-"""
-网页抓取原始数据 Repository
-"""
-
-from typing import List, Optional
+from datetime import date
+from typing import List, Optional, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, desc
+from sqlalchemy.dialects.mysql import insert as mysql_insert
 from repo.base_repo import BaseRepository
 from models.web_crawl_raw import WebCrawlRaw
 
@@ -120,3 +118,60 @@ class WebCrawlRawRepository(BaseRepository[WebCrawlRaw]):
             )
         )
         return result.scalars().all()
+    
+    async def upsert_match(self, data: Dict[str, Any]) -> WebCrawlRaw:
+        """
+        Upsert 比赛数据
+        基于唯一键 (league_config_id, home_team_name_normalized, away_team_name_normalized, match_date)
+        存在则更新，不存在则插入
+        
+        Args:
+            data: 比赛数据字典
+            
+        Returns:
+            插入或更新后的记录
+        """
+        stmt = mysql_insert(WebCrawlRaw).values(**data)
+        
+        stmt = stmt.on_duplicate_key_update(
+            crawl_batch_id=stmt.inserted.crawl_batch_id,
+            match_timestamp_utc=stmt.inserted.match_timestamp_utc,
+            channel_list=stmt.inserted.channel_list,
+            pagination_cursor=stmt.inserted.pagination_cursor,
+            source_match_text=stmt.inserted.source_match_text,
+            page_url=stmt.inserted.page_url,
+            crawled_at=stmt.inserted.crawled_at,
+            match_date_text=stmt.inserted.match_date_text,
+            home_team_name_raw=stmt.inserted.home_team_name_raw,
+            away_team_name_raw=stmt.inserted.away_team_name_raw,
+        )
+        
+        await self.session.execute(stmt)
+        await self.session.flush()
+        
+        return await self._get_by_unique_key(
+            data['league_config_id'],
+            data['home_team_name_normalized'],
+            data['away_team_name_normalized'],
+            data['match_date']
+        )
+    
+    async def _get_by_unique_key(
+        self,
+        league_config_id: int,
+        home_team_normalized: str,
+        away_team_normalized: str,
+        match_date: date
+    ) -> Optional[WebCrawlRaw]:
+        """根据唯一键获取记录"""
+        result = await self.session.execute(
+            select(WebCrawlRaw).where(
+                and_(
+                    WebCrawlRaw.league_config_id == league_config_id,
+                    WebCrawlRaw.home_team_name_normalized == home_team_normalized,
+                    WebCrawlRaw.away_team_name_normalized == away_team_normalized,
+                    WebCrawlRaw.match_date == match_date
+                )
+            )
+        )
+        return result.scalar_one_or_none()

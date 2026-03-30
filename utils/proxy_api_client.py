@@ -11,6 +11,9 @@ class Proxy911APIClient:
     """
     911proxy API 客户端
     
+    注意：此客户端仅用于管理功能（创建账户、查看流量等），
+    不用于运行时代理。运行时代理应直接使用 proxy_manager。
+    
     功能：
     - 代理账户管理（创建、删除、启用、禁用）
     - 流量查询
@@ -21,9 +24,34 @@ class Proxy911APIClient:
     BASE_URL = "https://api.911proxy.com"
     
     def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or os.getenv('PROXY_API_KEY')
+        raw_key = api_key or os.getenv('PROXY_API_KEY', '')
+        self.api_key = self._extract_api_key(raw_key)
         if not self.api_key:
-            logger.warning("911proxy API key not configured, API features will be disabled")
+            logger.info("911proxy API key not configured, API management features will be disabled")
+    
+    def _extract_api_key(self, raw_key: str) -> Optional[str]:
+        """从可能包含完整URL的配置中提取纯 app_key"""
+        if not raw_key:
+            return None
+        
+        # 如果是完整 URL，尝试提取 app_key 参数
+        if 'app_key=' in raw_key:
+            try:
+                from urllib.parse import urlparse, parse_qs
+                parsed = urlparse(raw_key)
+                params = parse_qs(parsed.query)
+                if 'app_key' in params:
+                    return params['app_key'][0]
+            except Exception:
+                pass
+        
+        # 否则直接返回（假设已经是纯 key）
+        return raw_key if raw_key else None
+    
+    @property
+    def is_available(self) -> bool:
+        """检查 API 是否可用"""
+        return bool(self.api_key)
     
     def _make_request(
         self,
@@ -43,9 +71,14 @@ class Proxy911APIClient:
         
         Returns:
             API 响应数据
+            
+        Raises:
+            ValueError: API key 未配置
+            RuntimeError: API 请求失败（session过期等）
         """
         if not self.api_key:
-            raise ValueError("API key is required but not configured")
+            raise ValueError("API key is required but not configured. "
+                           "This is a MANAGEMENT feature, not required for runtime proxy.")
         
         url = f"{self.BASE_URL}{endpoint}"
         
@@ -65,14 +98,22 @@ class Proxy911APIClient:
             result = response.json()
             
             if result.get('code') != 200:
-                logger.error(f"API request failed: {result.get('msg')}")
-                raise Exception(f"API error: {result.get('msg')}")
+                error_msg = result.get('msg', 'Unknown error')
+                if 'session' in error_msg.lower() or 'expired' in error_msg.lower():
+                    logger.error(f"911proxy API session expired: {error_msg}")
+                    raise RuntimeError(
+                        f"API session expired: {error_msg}. "
+                        "Please login to 911proxy website to refresh your API key. "
+                        "Note: This only affects MANAGEMENT features, runtime proxy works fine."
+                    )
+                logger.error(f"API request failed: {error_msg}")
+                raise RuntimeError(f"API error: {error_msg}")
             
             return result
             
         except requests.exceptions.RequestException as e:
             logger.error(f"API request error: {e}")
-            raise
+            raise RuntimeError(f"Network error when calling 911proxy API: {e}")
     
     # ==================== 代理账户管理 ====================
     

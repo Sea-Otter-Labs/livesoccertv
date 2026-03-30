@@ -1,8 +1,3 @@
-"""
-环境变量加载器
-统一加载 .env 文件，避免重复加载
-"""
-
 import os
 import sys
 from pathlib import Path
@@ -111,8 +106,13 @@ if __name__ == "__main__":
                 else:
                     display_value = value
                 print(f"  {var}: {display_value}")
+                # 添加说明
+                if var == 'PROXY_API_KEY':
+                    print(f"       (仅用于管理功能，运行时代理不依赖此项)")
             else:
                 print(f"  {var}: 未设置")
+                if var == 'PROXY_API_KEY':
+                    print(f"       (可选：仅管理功能需要，运行时代理不需要)")
     
     print("\n" + "=" * 60)
     print("环境变量加载测试完成")

@@ -13,7 +13,6 @@ from repo import (
     MatchBroadcastRepository,
     AlertLogRepository,
 )
-from models import BroadcastMatchStatus, AlertType, Severity
 from config.settings import LARK_WEBHOOK_URL, LARK_SECRET, ALERT_ENABLED
 from services.lark_notifier import AlertNotifier
 
@@ -291,7 +290,7 @@ class DailyTaskOrchestrator:
             # 检查是否已存在
             existing = await broadcast_repo.get_by_fixture_id(alignment.fixture_id)
             
-            if alignment.result.value == 'matched':
+            if alignment.result == 'matched':
                 # 对齐成功，保存到 match_broadcasts 表
                 data = {
                     'fixture_id': alignment.fixture_id,
@@ -303,7 +302,7 @@ class DailyTaskOrchestrator:
                     'home_team_name': alignment.home_team_name,
                     'away_team_id': api_fixtures[0].away_team_id,
                     'away_team_name': alignment.away_team_name,
-                    'broadcast_match_status': BroadcastMatchStatus.MATCHED,
+                    'broadcast_match_status': 'matched',
                     'matched_confidence': alignment.confidence,
                     'web_crawl_raw_id': alignment.web_crawl_raw_id,
                     'channels': alignment.channels,
@@ -317,7 +316,7 @@ class DailyTaskOrchestrator:
                 
                 aligned += 1
                 
-            elif alignment.result.value == 'unmatched':
+            elif alignment.result == 'unmatched':
                 # 未匹配，创建未匹配记录
                 data = {
                     'fixture_id': alignment.fixture_id,
@@ -329,21 +328,21 @@ class DailyTaskOrchestrator:
                     'home_team_name': alignment.home_team_name,
                     'away_team_id': 0,
                     'away_team_name': alignment.away_team_name,
-                    'broadcast_match_status': BroadcastMatchStatus.UNMATCHED,
+                    'broadcast_match_status': 'unmatched',
                     'matched_confidence': 0.0,
                     'channels': None,
                     'last_verified_at': datetime.utcnow()
                 }
-                
+
                 if existing:
                     await broadcast_repo.update(existing.id, data)
                 else:
                     await broadcast_repo.create(data)
-                
+
                 # 创建告警
                 alert_data = {
-                    'alert_type': AlertType.UNMATCHED_API_TO_WEB,
-                    'severity': Severity.MEDIUM,
+                    'alert_type': 'unmatched_api_to_web',
+                    'severity': 'medium',
                     'league_id': league.api_league_id,
                     'league_name': league.league_name,
                     'season': league.api_season,
@@ -374,7 +373,7 @@ class DailyTaskOrchestrator:
                 
                 unmatched += 1
                 
-            elif alignment.result.value == 'ambiguous':
+            elif alignment.result == 'ambiguous':
                 # 歧义匹配，创建告警
                 data = {
                     'fixture_id': alignment.fixture_id,
@@ -386,21 +385,21 @@ class DailyTaskOrchestrator:
                     'home_team_name': alignment.home_team_name,
                     'away_team_id': 0,
                     'away_team_name': alignment.away_team_name,
-                    'broadcast_match_status': BroadcastMatchStatus.AMBIGUOUS,
+                    'broadcast_match_status': 'ambiguous',
                     'matched_confidence': alignment.confidence,
                     'channels': None,
                     'last_verified_at': datetime.utcnow()
                 }
-                
+
                 if existing:
                     await broadcast_repo.update(existing.id, data)
                 else:
                     await broadcast_repo.create(data)
-                
+
                 # 创建告警
                 alert_data = {
-                    'alert_type': AlertType.AMBIGUOUS_MATCH,
-                    'severity': Severity.HIGH,
+                    'alert_type': 'ambiguous_match',
+                    'severity': 'high',
                     'league_id': league.api_league_id,
                     'league_name': league.league_name,
                     'season': league.api_season,

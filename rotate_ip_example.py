@@ -17,15 +17,32 @@ logger = logging.getLogger(__name__)
 
 
 async def rotate_ip_example():
-    """IP 轮换示例"""
+    """
+    IP 轮换示例（API 功能演示）
+    
+    注意：此示例展示如何使用 911proxy API 动态获取 IP。
+    这需要有效的 API Key。如果 API Key 过期，此示例无法运行。
+    
+    但运行时代理（爬虫）不依赖此功能，可以直接使用固定的
+    PROXY_USERNAME/PROXY_PASSWORD 配置。
+    """
     api_client = get_911_api_client()
     
-    if not api_client.api_key:
-        print("错误: 未配置 PROXY_API_KEY")
-        print("请在 .env 文件中设置 PROXY_API_KEY")
+    if not api_client.is_available:
+        print("\n" + "="*60)
+        print("⚠️  未配置 911proxy API Key")
+        print("="*60)
+        print("\n此示例需要 API Key 才能动态获取代理 IP。")
+        print("\n请在 .env 文件中设置：")
+        print("  PROXY_API_KEY=your_app_key_here")
+        print("\n注意：")
+        print("  - 运行时代理不依赖此功能")
+        print("  - 只要配置了 PROXY_HOST/PORT/USERNAME/PASSWORD")
+        print("  - 爬虫就能正常使用代理，无需 API Key")
+        print("="*60 + "\n")
         return
     
-    print("=== IP 轮换示例 ===\n")
+    print("=== IP 轮换示例（API 功能）===\n")
     
     try:
         # 获取代理 IP
@@ -88,9 +105,15 @@ def main():
     
     print("\n" + "=" * 60)
     print("提示:")
-    print("  - IP 轮换适用于需要频繁切换 IP 的场景")
-    print("  - 每次调用 get_proxy_ips() 会获取新的代理 IP")
+    print("  - 此示例展示 API 功能（动态获取 IP）")
+    print("  - 运行时代理无需此功能，使用固定配置即可")
     print("  - life 参数控制 IP 保留时长（分钟）")
+    print("\n运行时代理配置（不依赖 API）:")
+    print("  PROXY_ENABLED=true")
+    print("  PROXY_HOST=eu.911proxy.net")
+    print("  PROXY_PORT=2600")
+    print("  PROXY_USERNAME=your_username")
+    print("  PROXY_PASSWORD=your_password")
     print("=" * 60)
 
 
