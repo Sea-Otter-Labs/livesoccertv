@@ -15,6 +15,7 @@ from repo import (
 )
 from config.settings import LARK_WEBHOOK_URL, LARK_SECRET, ALERT_ENABLED
 from services.lark_notifier import AlertNotifier
+from utils.match_aligner import MatchAligner, MATCHED, UNMATCHED, AMBIGUOUS, MISSING_CHANNELS
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ class DailyTaskOrchestrator:
         self,
         session: AsyncSession,
         league_config_id: Optional[int] = None,
-        skip_api_sync: bool = False,
+        skip_api_sync: bool = True,
         skip_web_crawl: bool = True,  # 默认跳过网页抓取，改为手动运行
         skip_alignment: bool = False
     ) -> Dict[str, Any]:
@@ -176,13 +177,14 @@ class DailyTaskOrchestrator:
         total_aligned = 0
         total_unmatched = 0
         total_ambiguous = 0
+        total_web_unmatched = 0
         
         for league in leagues:
             if not league:
                 continue
             
             try:
-                # 获取该联赛需要处理的 API 比赛
+                # 获取该联赛需要处理的 API 比赛（全量查询）
                 api_repo = ApiFixtureRepository(session)
                 api_fixtures = await api_repo.get_by_league_and_season(
                     league_id=league.api_league_id,
@@ -204,8 +206,8 @@ class DailyTaskOrchestrator:
                     f"{len(web_data)} web crawls"
                 )
                 
-                # 执行对齐
-                aligned_count, unmatched_count, ambiguous_count = await self._align_league(
+                # 执行对齐（双向核对）
+                aligned_count, unmatched_count, ambiguous_count, web_unmatched_count = await self._align_league(
                     session=session,
                     league=league,
                     api_fixtures=api_fixtures,
@@ -215,14 +217,18 @@ class DailyTaskOrchestrator:
                 total_aligned += aligned_count
                 total_unmatched += unmatched_count
                 total_ambiguous += ambiguous_count
+                total_web_unmatched += web_unmatched_count
                 
             except Exception as e:
                 logger.error(f"Alignment failed for {league.league_name}: {e}")
+                # 回滚当前事务，避免污染后续联赛处理
+                await session.rollback()
         
         return {
             'total_aligned': total_aligned,
             'total_unmatched': total_unmatched,
-            'total_ambiguous': total_ambiguous
+            'total_ambiguous': total_ambiguous,
+            'total_web_unmatched': total_web_unmatched
         }
     
     async def _align_league(
@@ -233,10 +239,13 @@ class DailyTaskOrchestrator:
         web_data: List[Any]
     ) -> tuple:
         """
-        对齐单个联赛的数据
+        对齐单个联赛的数据，执行双向核对
+        
+        对API -> web: 每条API比赛都会产生一个对齐结果
+        对web -> API: 未被使用的web记录会输出error log
         
         Returns:
-            (对齐成功数, 未匹配数, 歧义数)
+            (对齐成功数, 未匹配数, 歧义数, web未匹配数)
         """
         broadcast_repo = MatchBroadcastRepository(session)
         alert_repo = AlertLogRepository(session)
@@ -249,6 +258,7 @@ class DailyTaskOrchestrator:
         aligned = 0
         unmatched = 0
         ambiguous = 0
+        missing_channels_count = 0
         
         # 转换数据格式
         api_list = [
@@ -264,6 +274,12 @@ class DailyTaskOrchestrator:
             for f in api_fixtures
         ]
         
+        # 创建 fixture_id 到 ApiFixture 对象的映射，用于后续查找 team_id
+        fixture_map = {f.fixture_id: f for f in api_fixtures}
+        
+        # 创建web数据id到原始对象的映射
+        web_map = {w.id: w for w in web_data}
+        
         web_list = [
             {
                 'id': w.id,
@@ -278,30 +294,30 @@ class DailyTaskOrchestrator:
             for w in web_data
         ]
         
-        # 使用对齐器进行对齐
-        from utils import align_matches
-        alignments = align_matches(
-            api_fixtures=api_list,
-            web_crawls=web_list,
-            time_tolerance_hours=4.0
-        )
+        # 使用对齐器进行对齐（双向核对）
+        aligner = MatchAligner(time_tolerance_hours=4.0)
+        alignments, unused_web = aligner.align_batch(api_list, web_list)
         
+        # 处理API -> web的匹配结果
         for alignment in alignments:
             # 检查是否已存在
             existing = await broadcast_repo.get_by_fixture_id(alignment.fixture_id)
             
-            if alignment.result == 'matched':
-                # 对齐成功，保存到 match_broadcasts 表
+            # 通过映射获取原始的 ApiFixture 对象以获取基础字段
+            original_fixture = fixture_map.get(alignment.fixture_id)
+            
+            if alignment.result == MATCHED:
+                # 对齐成功且频道信息完整，保存到 match_broadcasts 表
                 data = {
                     'fixture_id': alignment.fixture_id,
                     'league_id': league.api_league_id,
                     'season': league.api_season,
-                    'match_timestamp_utc': alignment.match_timestamp_utc,
-                    'match_date': datetime.fromtimestamp(alignment.match_timestamp_utc).date(),
-                    'home_team_id': api_fixtures[0].home_team_id,  # 从原始数据获取
-                    'home_team_name': alignment.home_team_name,
-                    'away_team_id': api_fixtures[0].away_team_id,
-                    'away_team_name': alignment.away_team_name,
+                    'match_timestamp_utc': original_fixture.match_timestamp_utc if original_fixture else alignment.match_timestamp_utc,
+                    'match_date': datetime.fromtimestamp(original_fixture.match_timestamp_utc).date() if original_fixture and original_fixture.match_timestamp_utc else (datetime.fromtimestamp(alignment.match_timestamp_utc).date() if alignment.match_timestamp_utc else None),
+                    'home_team_id': original_fixture.home_team_id if original_fixture else 0,
+                    'home_team_name': original_fixture.home_team_name if original_fixture else alignment.home_team_name,
+                    'away_team_id': original_fixture.away_team_id if original_fixture else 0,
+                    'away_team_name': original_fixture.away_team_name if original_fixture else alignment.away_team_name,
                     'broadcast_match_status': 'matched',
                     'matched_confidence': alignment.confidence,
                     'web_crawl_raw_id': alignment.web_crawl_raw_id,
@@ -316,18 +332,49 @@ class DailyTaskOrchestrator:
                 
                 aligned += 1
                 
-            elif alignment.result == 'unmatched':
+            elif alignment.result == MISSING_CHANNELS:
+                # 对齐成功但缺少频道信息
+                data = {
+                    'fixture_id': alignment.fixture_id,
+                    'league_id': league.api_league_id,
+                    'season': league.api_season,
+                    'match_timestamp_utc': original_fixture.match_timestamp_utc if original_fixture else alignment.match_timestamp_utc,
+                    'match_date': datetime.fromtimestamp(original_fixture.match_timestamp_utc).date() if original_fixture and original_fixture.match_timestamp_utc else (datetime.fromtimestamp(alignment.match_timestamp_utc).date() if alignment.match_timestamp_utc else None),
+                    'home_team_id': original_fixture.home_team_id if original_fixture else 0,
+                    'home_team_name': original_fixture.home_team_name if original_fixture else alignment.home_team_name,
+                    'away_team_id': original_fixture.away_team_id if original_fixture else 0,
+                    'away_team_name': original_fixture.away_team_name if original_fixture else alignment.away_team_name,
+                    'broadcast_match_status': 'missing_channels',
+                    'matched_confidence': alignment.confidence,
+                    'web_crawl_raw_id': alignment.web_crawl_raw_id,
+                    'channels': None,
+                    'last_verified_at': datetime.utcnow()
+                }
+                
+                if existing:
+                    await broadcast_repo.update(existing.id, data)
+                else:
+                    await broadcast_repo.create(data)
+                
+                missing_channels_count += 1
+                logger.warning(
+                    f"Match {alignment.fixture_id} ({original_fixture.home_team_name if original_fixture else alignment.home_team_name} "
+                    f"vs {original_fixture.away_team_name if original_fixture else alignment.away_team_name}): "
+                    f"aligned but missing channels, reason: {alignment.reason}"
+                )
+                
+            elif alignment.result == UNMATCHED:
                 # 未匹配，创建未匹配记录
                 data = {
                     'fixture_id': alignment.fixture_id,
                     'league_id': league.api_league_id,
                     'season': league.api_season,
-                    'match_timestamp_utc': alignment.match_timestamp_utc,
-                    'match_date': datetime.fromtimestamp(alignment.match_timestamp_utc).date() if alignment.match_timestamp_utc else None,
+                    'match_timestamp_utc': original_fixture.match_timestamp_utc if original_fixture else alignment.match_timestamp_utc,
+                    'match_date': datetime.fromtimestamp(original_fixture.match_timestamp_utc).date() if original_fixture and original_fixture.match_timestamp_utc else (datetime.fromtimestamp(alignment.match_timestamp_utc).date() if alignment.match_timestamp_utc else None),
                     'home_team_id': 0,
-                    'home_team_name': alignment.home_team_name,
+                    'home_team_name': original_fixture.home_team_name if original_fixture else alignment.home_team_name,
                     'away_team_id': 0,
-                    'away_team_name': alignment.away_team_name,
+                    'away_team_name': original_fixture.away_team_name if original_fixture else alignment.away_team_name,
                     'broadcast_match_status': 'unmatched',
                     'matched_confidence': 0.0,
                     'channels': None,
@@ -347,9 +394,9 @@ class DailyTaskOrchestrator:
                     'league_name': league.league_name,
                     'season': league.api_season,
                     'fixture_id': alignment.fixture_id,
-                    'match_timestamp_utc': alignment.match_timestamp_utc,
-                    'home_team_name': alignment.home_team_name,
-                    'away_team_name': alignment.away_team_name,
+                    'match_timestamp_utc': original_fixture.match_timestamp_utc if original_fixture else alignment.match_timestamp_utc,
+                    'home_team_name': original_fixture.home_team_name if original_fixture else alignment.home_team_name,
+                    'away_team_name': original_fixture.away_team_name if original_fixture else alignment.away_team_name,
                     'exception_summary': alignment.reason or 'API 比赛无法在网页数据中找到匹配',
                     'suggested_action': '检查 LiveSoccerTV 页面是否有该比赛',
                     'is_resolved': False
@@ -373,18 +420,18 @@ class DailyTaskOrchestrator:
                 
                 unmatched += 1
                 
-            elif alignment.result == 'ambiguous':
+            elif alignment.result == AMBIGUOUS:
                 # 歧义匹配，创建告警
                 data = {
                     'fixture_id': alignment.fixture_id,
                     'league_id': league.api_league_id,
                     'season': league.api_season,
-                    'match_timestamp_utc': alignment.match_timestamp_utc,
-                    'match_date': datetime.fromtimestamp(alignment.match_timestamp_utc).date() if alignment.match_timestamp_utc else None,
+                    'match_timestamp_utc': original_fixture.match_timestamp_utc if original_fixture else alignment.match_timestamp_utc,
+                    'match_date': datetime.fromtimestamp(original_fixture.match_timestamp_utc).date() if original_fixture and original_fixture.match_timestamp_utc else (datetime.fromtimestamp(alignment.match_timestamp_utc).date() if alignment.match_timestamp_utc else None),
                     'home_team_id': 0,
-                    'home_team_name': alignment.home_team_name,
+                    'home_team_name': original_fixture.home_team_name if original_fixture else alignment.home_team_name,
                     'away_team_id': 0,
-                    'away_team_name': alignment.away_team_name,
+                    'away_team_name': original_fixture.away_team_name if original_fixture else alignment.away_team_name,
                     'broadcast_match_status': 'ambiguous',
                     'matched_confidence': alignment.confidence,
                     'channels': None,
@@ -404,9 +451,9 @@ class DailyTaskOrchestrator:
                     'league_name': league.league_name,
                     'season': league.api_season,
                     'fixture_id': alignment.fixture_id,
-                    'match_timestamp_utc': alignment.match_timestamp_utc,
-                    'home_team_name': alignment.home_team_name,
-                    'away_team_name': alignment.away_team_name,
+                    'match_timestamp_utc': original_fixture.match_timestamp_utc if original_fixture else alignment.match_timestamp_utc,
+                    'home_team_name': original_fixture.home_team_name if original_fixture else alignment.home_team_name,
+                    'away_team_name': original_fixture.away_team_name if original_fixture else alignment.away_team_name,
                     'exception_summary': alignment.reason or '存在多个匹配的候选',
                     'suggested_action': '需要人工确认正确匹配',
                     'is_resolved': False
@@ -430,14 +477,30 @@ class DailyTaskOrchestrator:
                 
                 ambiguous += 1
         
+        # 处理web -> API的未匹配：输出error log
+        web_unmatched = len(unused_web)
+        for web_record in unused_web:
+            web_id = web_record.get('id')
+            web_raw = web_map.get(web_id)
+            
+            logger.error(
+                f"Web crawl record without API fixture match - "
+                f"league: {league.league_name}, "
+                f"web_id: {web_id}, "
+                f"timestamp: {web_record.get('match_timestamp_utc')}, "
+                f"home: {web_record.get('home_team_name_raw')}, "
+                f"away: {web_record.get('away_team_name_raw')}"
+            )
+        
         await session.commit()
         
         logger.info(
             f"Alignment completed for {league.league_name}: "
-            f"{aligned} aligned, {unmatched} unmatched, {ambiguous} ambiguous"
+            f"{aligned} aligned, {unmatched} unmatched, {ambiguous} ambiguous, "
+            f"{missing_channels_count} missing_channels, {web_unmatched} web_unmatched"
         )
         
-        return aligned, unmatched, ambiguous
+        return aligned, unmatched, ambiguous, web_unmatched
 
 
 async def run_daily_task(api_key: str, league_config_id: Optional[int] = None):

@@ -117,6 +117,11 @@ SPIDER_CONFIG = {
 # 日志配置
 LOG_LEVEL = 'INFO'
 LOG_FILE = 'logs/crawler.log'
+LOG_STDOUT = True  # 同时输出到控制台
+
+# 自定义日志格式
+LOG_FORMAT = '%(asctime)s [%(name)s] %(levelname)s: %(message)s'
+LOG_DATEFORMAT = '%Y-%m-%d %H:%M:%S'
 
 # 自动限速
 AUTOTHROTTLE_ENABLED = True

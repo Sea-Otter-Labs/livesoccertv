@@ -105,28 +105,60 @@ def parse_livesoccertv_date(
 def normalize_team_name(team_name: str) -> str:
     """
     标准化球队名称
+    
+    注意：此函数已委托给主工程的标准化实现，确保全系统使用同一套规则。
+    导入路径处理：尝试从主工程导入，失败则使用本地兼容实现（仅用于独立测试）
     """
     if not team_name:
         return ''
     
-    # 转小写
-    name = team_name.lower()
-    
-    # 移除西班牙语重音符号
-    char_map = {
-        'á': 'a', 'é': 'e', 'í': 'i', 'ó': 'o', 'ú': 'u',
-        'ñ': 'n', 'ü': 'u'
-    }
-    
-    for char, replacement in char_map.items():
-        name = name.replace(char, replacement)
-    
-    # 移除冗余词
-    remove_words = ['fc', 'cf', 'sc', 'ac', 'rc', 'real', 'club', 'deportivo']
-    words = name.split()
-    words = [w for w in words if w not in remove_words]
-    
-    return ' '.join(words).strip()
+    # 尝试从主工程导入标准化函数
+    try:
+        import sys
+        import os
+        # 添加项目根目录到路径（如果还没添加）
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+        if project_root not in sys.path:
+            sys.path.insert(0, project_root)
+        from utils.team_normalizer import normalize_team_name as main_normalizer
+        return main_normalizer(team_name)
+    except ImportError:
+        # 如果无法导入主工程（例如在独立测试环境），使用兼容实现
+        # 这个实现应该与主工程保持一致
+        name = team_name.lower()
+        
+        # 移除西班牙语重音符号
+        char_map = {
+            'á': 'a', 'é': 'e', 'í': 'i', 'ó': 'o', 'ú': 'u',
+            'ñ': 'n', 'ü': 'u', 'ç': 'c',
+            'Á': 'A', 'É': 'E', 'Í': 'I', 'Ó': 'O', 'Ú': 'U',
+            'Ñ': 'N', 'Ü': 'U', 'Ç': 'C'
+        }
+        
+        for char, replacement in char_map.items():
+            name = name.replace(char, replacement)
+        
+        # 移除标点符号
+        import re
+        name = re.sub(r'[^\w\s]', '', name)
+        
+        # 移除多余空格
+        name = ' '.join(name.split())
+        
+        # 移除冗余词（与主工程保持一致）
+        remove_words = [
+            'fc', 'cf', 'sc', 'ac', 'rc', 'as', 'ss', 'us', 'uc',
+            'real', 'club', 'deportivo', 'atletico', 'athletic',
+            'de', 'la', 'los', 'las', 'el'
+        ]
+        words = name.split()
+        filtered_words = [w for w in words if w not in remove_words]
+        
+        # 如果过滤后为空，回退到过滤前的结果
+        if filtered_words:
+            name = ' '.join(filtered_words)
+        
+        return name.strip()
 
 
 def utc_now_timestamp() -> int:

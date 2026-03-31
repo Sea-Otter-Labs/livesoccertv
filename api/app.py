@@ -58,31 +58,6 @@ def index():
 def get_match_by_fixture_id(fixture_id: int):
     """
     获取指定比赛的详情和转播信息（带 Redis 缓存）
-
-    Path Parameters:
-        fixture_id: API-Football fixture ID
-
-    Response:
-        {
-            "fixture_id": 12345,
-            "league_id": 140,
-            "season": 2025,
-            "match_timestamp_utc": 1704067200,
-            "home_team": "Barcelona",
-            "away_team": "Atletico Madrid",
-            "status": "NS",
-            "score": "0 - 0",
-            "broadcast_match_status": "matched",
-            "channels": [
-                {
-                    "name": "ESPN",
-                    "country": "USA",
-                    "type": "TV",
-                    "is_streaming": false
-                }
-            ],
-            "last_verified_at": "2024-01-01T12:00:00"
-        }
     """
     cache_key = get_cache_key(fixture_id)
 

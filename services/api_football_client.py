@@ -161,7 +161,8 @@ class ApiFootballClient:
         team_id: Optional[int] = None,
         league_id: Optional[int] = None,
         season: Optional[int] = None,
-        country: Optional[str] = None
+        country: Optional[str] = None,
+        search: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
         获取球队信息
@@ -171,6 +172,7 @@ class ApiFootballClient:
             league_id: 联赛 ID
             season: 赛季
             country: 国家
+            search: 球队名称搜索关键词（模糊匹配）
         
         Returns:
             球队数据列表
@@ -185,6 +187,8 @@ class ApiFootballClient:
             params['season'] = season
         if country:
             params['country'] = country
+        if search:
+            params['search'] = search
         
         data = await self._make_request('teams', params)
         

@@ -103,7 +103,10 @@ def normalize_team_name(
     
     # 移除冗余词
     if remove_redundant:
-        normalized = remove_redundant_words(normalized)
+        normalized_with_redundancy_removed = remove_redundant_words(normalized)
+        # 如果移除冗余词后结果为空，则回退到基础标准化结果
+        if normalized_with_redundancy_removed:
+            normalized = normalized_with_redundancy_removed
     
     return normalized
 

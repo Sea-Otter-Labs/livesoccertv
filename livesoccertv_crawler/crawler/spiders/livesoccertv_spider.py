@@ -76,50 +76,81 @@ class LiveSoccerTVSpider(scrapy.Spider):
     
     def parse_league_page(self, response):
         """
-        解析联赛页面（测试模式：只爬取当前页）
+        解析联赛页面 - 流式产出比赛数据
         """
         self.page = response.meta.get('page')
         
         if not self.page:
             self.logger.error("No page object in response")
+            # 写入失败状态
+            yield self._create_task_item(
+                task_phase='failed',
+                status='failed',
+                matches_crawled=self.matches_crawled,
+                error_message='No page object in response'
+            )
             return
         
         self.logger.info(f"Parsing league page: {response.url}")
-        
-        # 更新任务状态为爬取中
+
+        # 检查初始页面的翻页按钮状态
+        left_btn, left_info = self._find_pagination_button('left')
+        right_btn, right_info = self._find_pagination_button('right')
+        self.logger.info(f"Initial page pagination - Left: {'found' if left_btn else 'NOT FOUND'}, Right: {'found' if right_btn else 'NOT FOUND'}")
+
+        # 更新任务状态为爬取中 - matches_crawled=0
         yield self._create_task_item(
             task_phase='web_crawl',
             status='running',
-            matches_crawled=self.matches_crawled
+            matches_crawled=0
         )
         
-        matches = self._parse_current_page(response.url)
-        for match_data in matches:
-            yield self._create_match_item(match_data)
-            self.matches_crawled += 1
+        # 1. 解析当前页 - 流式产出
+        self.logger.info("Crawling current page...")
+        yield from self._parse_current_page_stream(response.url)
         
-        self.logger.info(f"Current page: {len(matches)} matches extracted")
+        self.logger.info(f"Current page completed: {self.matches_crawled} matches so far")
         
-        # ===== 以下翻页逻辑已注释（测试模式）=====
-        # 2. 向左翻页抓历史
-        left_matches = self._crawl_pagination('left')
-        for match_data in left_matches:
-            yield self._create_match_item(match_data)
-            self.matches_crawled += 1
+        # 2. 向左翻页抓历史 - 流式产出
+        self.logger.info("Starting left pagination...")
+        yield from self._crawl_pagination_stream('left')
+        
+        self.logger.info(f"Left pagination completed: {self.matches_crawled} matches so far")
         
         # 3. 回到起始页
+        self.logger.info("Returning to start page...")
         self.page.get(self.start_url)
         self.page.wait.doc_loaded(timeout=20)
+
+        # 关键修复：等待页面业务就绪，确保分页控件已加载
+        self.logger.info("Waiting for page to be ready after returning to start...")
+        if not self._wait_until_page_ready(timeout=30):
+            self.logger.error("Page not ready after returning to start, skipping right pagination")
+            # 即使右翻失败，也标记为完成（已有数据已写入）
+            yield self._create_task_item(
+                task_phase='completed',
+                status='success',
+                matches_crawled=self.matches_crawled
+            )
+            return
+        
+        self.logger.info("Page ready, clearing visited cursors and starting right pagination")
         self.visited_cursors.clear()
+
+        # 检查右翻按钮是否存在（预检）
+        right_button, right_info = self._find_pagination_button('right')
+        if right_button:
+            self.logger.info(f"Right pagination button found: {right_info}")
+        else:
+            self.logger.warning("Right pagination button not found at start page!")
+
+        # 4. 向右翻页抓未来 - 流式产出
+        self.logger.info("Starting right pagination...")
+        yield from self._crawl_pagination_stream('right')
         
-        # 4. 向右翻页抓未来
-        right_matches = self._crawl_pagination('right')
-        for match_data in right_matches:
-            yield self._create_match_item(match_data)
-            self.matches_crawled += 1
-        # ===== 翻页逻辑注释结束 =====
+        self.logger.info(f"Right pagination completed: {self.matches_crawled} matches total")
         
-        # 完成任务
+        # 完成任务 - 只在最后写入 matches_crawled
         yield self._create_task_item(
             task_phase='completed',
             status='success',
@@ -128,35 +159,169 @@ class LiveSoccerTVSpider(scrapy.Spider):
         
         self.logger.info(f"Crawl completed. Total matches: {self.matches_crawled}")
     
-    def _parse_current_page(self, page_url):
+    def _parse_current_page_stream(self, page_url):
         """
-        解析当前页的比赛数据
+        解析当前页的比赛数据 - 流式产出
         """
-        matches = []
-        
         try:
             # 等待表格加载
             if not self._wait_until_page_ready(timeout=30):
                 self.logger.warning(f"Schedule table not found on {page_url}")
-                return matches
+                return
             
             # 获取页面内容哈希用于去重
             page_hash = self._get_page_hash()
             if page_hash in self.visited_cursors:
                 self.logger.info(f"Page already visited: {page_hash}")
-                return matches
+                return
             
             self.visited_cursors.add(page_hash)
             
-            # 解析比赛数据
+            # 解析比赛数据 - 流式产出
             current_cursor = self._get_pagination_cursor()
-            matches = self._extract_matches(page_url, current_cursor)
-            
+            for match_data in self._extract_matches_stream(page_url, current_cursor):
+                yield self._create_match_item(match_data)
+                self.matches_crawled += 1
+                
         except Exception as e:
             self.logger.error(f"Error parsing current page: {e}")
-        
-        return matches
+    
+    def _extract_matches_stream(self, page_url, pagination_cursor):
+        """
+        提取页面中的比赛数据 - 流式产出（生成器）
+        """
+        try:
+            # 获取表格所有行
+            self.logger.info(f"=== Extracting matches from: {page_url} ===")
+            self.logger.info(f"Current page URL: {self.page.url}")
+            self.logger.info(f"Page title: {self.page.title}")
 
+            # 检查 #_live 容器是否存在
+            try:
+                live_container = self.page.ele('css:#_live', timeout=2)
+                self.logger.info(f"#_live container found: {live_container is not None}")
+                if live_container:
+                    self.logger.info(f"#_live container HTML snippet: {live_container.html[:500]}...")
+            except Exception as e:
+                self.logger.error(f"Failed to find #_live container: {e}")
+
+            table = self.page.ele('css:#_live table.schedules.blueborder', timeout=3)
+            if not table:
+                self.logger.warning("Schedule table not found")
+                return
+            
+            rows = table.eles('css:tbody tr')
+            self.logger.info(f"Found {len(rows)} rows in table")
+
+            current_date = None
+            for row in rows:
+                try:
+                    row_class = row.attr('class') or ''
+                    
+                    # 检查是否是日期行
+                    if 'drow' in row_class:
+                        current_date = self._parse_date_row(row)
+                        continue
+                    
+                    # 检查是否是比赛行
+                    if 'matchrow' in row_class:
+                        match_data = self._parse_match_row(row, current_date, page_url, pagination_cursor)
+                        if match_data:
+                            # 访问详情页提取国际频道
+                            match_detail_url = match_data.get('match_detail_url', '')
+                            international_channels = self._fetch_international_channels(match_detail_url)
+                            
+                            # 如果获取失败，跳过该比赛
+                            if not international_channels:
+                                self.logger.warning(
+                                    f"Failed to fetch international channels, skipping match: "
+                                    f"{match_data.get('source_match_text', 'Unknown')}"
+                                )
+                                continue
+                            
+                            # 填充国际频道信息
+                            match_data['channel_list'] = international_channels
+                            
+                            # 立即产出这场比赛 - 流式写入
+                            yield match_data
+                            
+                except Exception as e:
+                    self.logger.debug(f"Error parsing row: {e}")
+                    continue
+        
+        except Exception as e:
+            self.logger.error(f"Error extracting matches: {e}")
+
+    def _crawl_pagination_stream(self, direction):
+        """
+        翻页抓取 - 流式产出比赛数据（生成器）
+        """
+        self.current_direction = direction
+        max_pages = 100
+        page_count = 0
+        
+        self.logger.info(f"Starting {direction} pagination...")
+        
+        while page_count < max_pages:
+            page_count += 1
+            
+            # 查找翻页按钮
+            button, button_info = self._find_pagination_button(direction)
+            
+            if not button:
+                self.logger.info(f"No {direction} pagination button found at page {page_count}")
+                break
+            
+            # 检查按钮是否可点击
+            btn_class = button.attr('class') or ''
+            if 'disabled' in btn_class:
+                self.logger.info(f"{direction.capitalize()} button disabled")
+                break
+            
+            # 执行翻页
+            self._last_pagination_button_info = button_info
+            success = self._execute_pagination(button, button_info, direction, page_count)
+            
+            if not success:
+                self.logger.error(f"Pagination execution failed for {direction}")
+                break
+            
+            # 等待页面准备就绪
+            if not self._wait_until_page_ready(timeout=30):
+                self.logger.warning(f"Page not ready after {direction} pagination click")
+                break
+            
+            # 检查页面是否变化（去重）
+            page_hash = self._get_page_hash()
+            if page_hash in self.visited_cursors:
+                self.logger.info(f"Duplicate page detected, stopping {direction} pagination")
+                break
+            
+            self.visited_cursors.add(page_hash)
+            
+            # 解析新页面 - 流式产出
+            current_url = self.page.url
+            current_cursor = self._get_pagination_cursor()
+            
+            matches_on_page = 0
+            for match_data in self._extract_matches_stream(current_url, current_cursor):
+                # 检查是否超出时间窗口
+                if self._is_outside_window(match_data.get('match_timestamp_utc'), direction):
+                    self.logger.info(f"Reached window boundary in {direction} direction")
+                    return
+                
+                # 产出这场比赛 - 流式写入
+                yield self._create_match_item(match_data)
+                self.matches_crawled += 1
+                matches_on_page += 1
+            
+            self.logger.info(
+                f"Page {page_count} ({direction}): extracted {matches_on_page} matches, "
+                f"total: {self.matches_crawled}"
+            )
+        
+        self.logger.info(f"Completed {direction} pagination, pages: {page_count}, matches: {self.matches_crawled}")
+    
     def _wait_until_page_ready(self, timeout=20):
         """等待业务页面恢复到可解析状态。"""
         end_time = time.time() + timeout
@@ -359,150 +524,6 @@ class LiveSoccerTVSpider(scrapy.Spider):
             self.logger.error(f"Error executing pagination: {e}")
             return False
     
-    def _crawl_pagination(self, direction):
-        """
-        翻页抓取
-        
-        Args:
-            direction: 'left' 或 'right'
-        
-        Returns:
-            list: 抓取的比赛数据列表
-        """
-        self.current_direction = direction
-        all_matches = []
-        max_pages = 100
-        page_count = 0
-        
-        self.logger.info(f"Starting {direction} pagination...")
-        
-        while page_count < max_pages:
-            page_count += 1
-            
-            # 查找翻页按钮（新逻辑）
-            button, button_info = self._find_pagination_button(direction)
-            
-            if not button:
-                self.logger.info(f"No {direction} pagination button found at page {page_count}")
-                break
-            
-            # 检查按钮是否可点击
-            btn_class = button.attr('class') or ''
-            if 'disabled' in btn_class:
-                self.logger.info(f"{direction.capitalize()} button disabled")
-                break
-            
-            # 执行翻页
-            self._last_pagination_button_info = button_info
-            success = self._execute_pagination(button, button_info, direction, page_count)
-            
-            if not success:
-                self.logger.error(f"Pagination execution failed for {direction}")
-                break
-            
-            # 等待页面准备就绪
-            if not self._wait_until_page_ready(timeout=30):
-                self.logger.warning(f"Page not ready after {direction} pagination click")
-                break
-            
-            # 检查页面是否变化（去重）
-            page_hash = self._get_page_hash()
-            if page_hash in self.visited_cursors:
-                self.logger.info(f"Duplicate page detected, stopping {direction} pagination")
-                break
-            
-            self.visited_cursors.add(page_hash)
-            
-            # 解析新页面
-            current_url = self.page.url
-            current_cursor = self._get_pagination_cursor()
-            
-            matches = self._extract_matches(current_url, current_cursor)
-            
-            for match_data in matches:
-                # 检查是否超出时间窗口
-                if self._is_outside_window(match_data.get('match_timestamp_utc'), direction):
-                    self.logger.info(f"Reached window boundary in {direction} direction")
-                    return all_matches
-                
-                all_matches.append(match_data)
-            
-            self.logger.info(
-                f"Page {page_count} ({direction}): extracted {len(matches)} matches, "
-                f"total: {len(all_matches)}"
-            )
-        
-        self.logger.info(f"Completed {direction} pagination, pages: {page_count}, matches: {len(all_matches)}")
-        return all_matches
-    
-    def _extract_matches(self, page_url, pagination_cursor):
-        """
-        提取页面中的比赛数据
-        """
-        matches = []
-        current_date = None
-        
-        try:
-            # 获取表格所有行
-            self.logger.info(f"=== Extracting matches from: {page_url} ===")
-            self.logger.info(f"Current page URL: {self.page.url}")
-            self.logger.info(f"Page title: {self.page.title}")
-
-
-            # 检查 #_live 容器是否存在
-            try:
-                live_container = self.page.ele('css:#_live', timeout=2)
-                self.logger.info(f"#_live container found: {live_container is not None}")
-                if live_container:
-                    self.logger.info(f"#_live container HTML snippet: {live_container.html[:500]}...")
-            except Exception as e:
-                self.logger.error(f"Failed to find #_live container: {e}")
-
-            table = self.page.ele('css:#_live table.schedules.blueborder', timeout=3)
-            if not table:
-                return matches
-            
-            rows = table.eles('css:tbody tr')
-            self.logger.info(f"{rows}")
-
-            for row in rows:
-                try:
-                    row_class = row.attr('class') or ''
-                    
-                    # 检查是否是日期行
-                    if 'drow' in row_class:
-                        current_date = self._parse_date_row(row)
-                        continue
-                    
-                    # 检查是否是比赛行
-                    if 'matchrow' in row_class:
-                        match_data = self._parse_match_row(row, current_date, page_url, pagination_cursor)
-                        if match_data:
-                            # 访问详情页提取国际频道
-                            match_detail_url = match_data.get('match_detail_url', '')
-                            international_channels = self._fetch_international_channels(match_detail_url)
-                            
-                            # 如果获取失败，跳过该比赛
-                            if not international_channels:
-                                self.logger.warning(
-                                    f"Failed to fetch international channels, skipping match: "
-                                    f"{match_data.get('source_match_text', 'Unknown')}"
-                                )
-                                continue
-                            
-                            # 填充国际频道信息
-                            match_data['channel_list'] = international_channels
-                            matches.append(match_data)
-                
-                except Exception as e:
-                    self.logger.debug(f"Error parsing row: {e}")
-                    continue
-        
-        except Exception as e:
-            self.logger.error(f"Error extracting matches: {e}")
-        
-        return matches
-    
     def _parse_date_row(self, row):
         """解析日期行"""
         try:
@@ -654,7 +675,7 @@ class LiveSoccerTVSpider(scrapy.Spider):
                     international_div_html = international_div_html()
             if not international_div_html:
                 international_div_html = international_div.text
-            self.logger.info("International TV div detail: %s", international_div_html)
+            # self.logger.info("International TV div detail: %s", international_div_html)
             
             # 查找表格（在详情页中）
             table = international_div.ele('css:table.ichannels', timeout=3)
@@ -768,7 +789,7 @@ class LiveSoccerTVSpider(scrapy.Spider):
         
         return item
     
-    def _create_task_item(self, task_phase=None, status=None, **kwargs):
+    def _create_task_item(self, task_phase=None, status=None, matches_crawled=None, error_message=None):
         """创建任务 Item"""
         item = CrawlTaskItem()
         
@@ -776,10 +797,10 @@ class LiveSoccerTVSpider(scrapy.Spider):
         item['league_config_id'] = int(self.league_config_id) if self.league_config_id else None
         item['task_phase'] = task_phase
         item['status'] = status
-        item['current_pagination_cursor'] = kwargs.get('current_pagination_cursor')
-        item['pagination_direction'] = kwargs.get('pagination_direction', self.current_direction)
-        item['matches_crawled'] = kwargs.get('matches_crawled', self.matches_crawled)
-        item['error_message'] = kwargs.get('error_message')
+        item['current_pagination_cursor'] = None
+        item['pagination_direction'] = self.current_direction
+        item['matches_crawled'] = matches_crawled if matches_crawled is not None else self.matches_crawled
+        item['error_message'] = error_message
         
         return item
     

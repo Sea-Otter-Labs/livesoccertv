@@ -26,7 +26,6 @@ from utils.time_utils import (
 )
 
 from utils.match_aligner import (
-    MatchResult,
     MatchCandidate,
     MatchAlignment,
     MatchAligner,
@@ -56,7 +55,6 @@ __all__ = [
     'TimeMatcher',
     
     # Match aligner
-    'MatchResult',
     'MatchCandidate',
     'MatchAlignment',
     'MatchAligner',

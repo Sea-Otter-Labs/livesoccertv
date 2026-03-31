@@ -29,10 +29,17 @@ class ApiFixtureRepository(BaseRepository[ApiFixture]):
         league_id: int, 
         season: int,
         skip: int = 0,
-        limit: int = 100
+        limit: Optional[int] = None
     ) -> List[ApiFixture]:
-        """获取指定联赛和赛季的比赛"""
-        result = await self.session.execute(
+        """获取指定联赛和赛季的比赛
+        
+        Args:
+            league_id: 联赛ID
+            season: 赛季年份
+            skip: 分页起始位置
+            limit: 分页数量，None 表示获取全部
+        """
+        query = (
             select(ApiFixture)
             .where(
                 and_(
@@ -42,8 +49,12 @@ class ApiFixtureRepository(BaseRepository[ApiFixture]):
             )
             .order_by(ApiFixture.match_timestamp_utc)
             .offset(skip)
-            .limit(limit)
         )
+        
+        if limit is not None:
+            query = query.limit(limit)
+        
+        result = await self.session.execute(query)
         return result.scalars().all()
     
     async def get_by_date_range(

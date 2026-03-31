@@ -175,3 +175,73 @@ class WebCrawlRawRepository(BaseRepository[WebCrawlRaw]):
             )
         )
         return result.scalar_one_or_none()
+    
+    async def get_unique_team_names_raw(
+        self,
+        league_config_id: Optional[int] = None,
+        limit: int = 100
+    ) -> Dict[str, List[str]]:
+        """
+        获取所有唯一的原始球队名称
+        
+        Args:
+            league_config_id: 联赛配置ID，为None则获取所有联赛
+            limit: 最多返回多少条记录用于提取队名
+            
+        Returns:
+            Dict with 'home_teams' and 'away_teams' keys containing unique raw team names
+        """
+        from sqlalchemy import distinct
+        
+        query = select(WebCrawlRaw)
+        if league_config_id:
+            query = query.where(WebCrawlRaw.league_config_id == league_config_id)
+        query = query.limit(limit)
+        
+        result = await self.session.execute(query)
+        records = result.scalars().all()
+        
+        home_teams = list(set([r.home_team_name_raw for r in records if r.home_team_name_raw]))
+        away_teams = list(set([r.away_team_name_raw for r in records if r.away_team_name_raw]))
+        
+        return {
+            'home_teams': home_teams,
+            'away_teams': away_teams,
+            'all_teams': list(set(home_teams + away_teams))
+        }
+    
+    async def get_team_name_pairs(
+        self,
+        league_config_id: Optional[int] = None,
+        limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """
+        获取成对的球队名称（主客队）
+        
+        Args:
+            league_config_id: 联赛配置ID
+            limit: 返回记录数限制
+            
+        Returns:
+            包含比赛信息的字典列表
+        """
+        query = select(WebCrawlRaw)
+        if league_config_id:
+            query = query.where(WebCrawlRaw.league_config_id == league_config_id)
+        query = query.order_by(desc(WebCrawlRaw.crawled_at)).limit(limit)
+        
+        result = await self.session.execute(query)
+        records = result.scalars().all()
+        
+        return [
+            {
+                'id': r.id,
+                'league_config_id': r.league_config_id,
+                'home_team_raw': r.home_team_name_raw,
+                'away_team_raw': r.away_team_name_raw,
+                'home_team_normalized': r.home_team_name_normalized,
+                'away_team_normalized': r.away_team_name_normalized,
+                'match_date_text': r.match_date_text,
+            }
+            for r in records
+        ]
