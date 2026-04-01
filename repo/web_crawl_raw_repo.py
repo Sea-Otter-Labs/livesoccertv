@@ -153,7 +153,7 @@ class WebCrawlRawRepository(BaseRepository[WebCrawlRaw]):
             data['league_config_id'],
             data['home_team_name_normalized'],
             data['away_team_name_normalized'],
-            data['match_date']
+            data['match_timestamp_utc']
         )
     
     async def _get_by_unique_key(
@@ -161,20 +161,36 @@ class WebCrawlRawRepository(BaseRepository[WebCrawlRaw]):
         league_config_id: int,
         home_team_normalized: str,
         away_team_normalized: str,
-        match_date: date
+        match_timestamp_utc: int
     ) -> Optional[WebCrawlRaw]:
-        """根据唯一键获取记录"""
+        """根据唯一键获取记录，处理重复数据"""
         result = await self.session.execute(
             select(WebCrawlRaw).where(
                 and_(
                     WebCrawlRaw.league_config_id == league_config_id,
                     WebCrawlRaw.home_team_name_normalized == home_team_normalized,
                     WebCrawlRaw.away_team_name_normalized == away_team_normalized,
-                    WebCrawlRaw.match_date == match_date
+                    WebCrawlRaw.match_timestamp_utc == match_timestamp_utc
                 )
-            )
+            ).limit(1)  # 使用 limit(1) 处理可能的重复数据
         )
-        return result.scalar_one_or_none()
+        records = result.scalars().all()
+        
+        if records:
+            if len(records) > 1:
+                # 记录重复数据警告
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(
+                    f"[DATA_QUALITY] 发现 {len(records)} 条重复记录: "
+                    f"league_id={league_config_id}, "
+                    f"match={home_team_normalized} vs {away_team_normalized}, "
+                    f"timestamp={match_timestamp_utc}, "
+                    f"ids={[r.id for r in records[:5]]}"
+                )
+            return records[0]
+        
+        return None
     
     async def get_unique_team_names_raw(
         self,

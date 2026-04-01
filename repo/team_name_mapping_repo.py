@@ -98,11 +98,17 @@ class TeamNameMappingRepository(BaseRepository[TeamNameMapping]):
         normalized_name: str,
         alias_name: str,
         api_team_id: Optional[int] = None,
-        alias_type: str = 'common'
+        alias_type: str = 'common',
+        source: Optional[str] = None
     ) -> TeamNameMapping:
-        """添加新的名称映射"""
-        # 检查是否已存在
-        existing = await self.session.execute(
+        """
+        添加新的名称映射
+        
+        如果同 alias_name + api_team_id 已存在，则返回现有记录
+        否则创建新记录
+        """
+        # 检查是否已存在（复用现有记录）
+        result = await self.session.execute(
             select(TeamNameMapping)
             .where(
                 and_(
@@ -111,15 +117,17 @@ class TeamNameMappingRepository(BaseRepository[TeamNameMapping]):
                 )
             )
         )
+        existing = result.scalar_one_or_none()
+        if existing:
+            return existing
         
-        if existing.scalar_one_or_none():
-            return existing.scalar_one()
-        
+        # 创建新记录
         data = {
             'normalized_name': normalized_name,
             'alias_name': alias_name,
             'api_team_id': api_team_id,
-            'alias_type': alias_type
+            'alias_type': alias_type,
+            'source': source
         }
         
         return await self.create(data)

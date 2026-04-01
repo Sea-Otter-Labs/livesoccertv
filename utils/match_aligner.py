@@ -87,6 +87,41 @@ class MatchAligner:
         
         return ''
     
+    def _check_team_id_match(
+        self,
+        api_home_id: Optional[int],
+        api_away_id: Optional[int],
+        web_home_id: Optional[int],
+        web_away_id: Optional[int]
+    ) -> Optional[str]:
+        """
+        基于 team_id 检查球队匹配
+        
+        Args:
+            api_home_id: API 主队 ID
+            api_away_id: API 客队 ID
+            web_home_id: 网页主队 ID（解析结果）
+            web_away_id: 网页客队 ID（解析结果）
+            
+        Returns:
+            'normal' - 正常匹配（主对主，客对客）
+            'swapped' - 主客互换匹配
+            None - 不匹配
+        """
+        # 如果任一方没有 team_id，无法进行 team_id 匹配
+        if not all([api_home_id, api_away_id, web_home_id, web_away_id]):
+            return None
+        
+        # 正常匹配
+        if api_home_id == web_home_id and api_away_id == web_away_id:
+            return 'normal'
+        
+        # 主客互换匹配
+        if api_home_id == web_away_id and api_away_id == web_home_id:
+            return 'swapped'
+        
+        return None
+    
     def align_single(
         self,
         api_fixture: Dict[str, Any],
@@ -102,32 +137,28 @@ class MatchAligner:
         Returns:
             对齐结果
         """
-        # 标准化API数据 - 优先使用已入库的normalized字段
-        api_home = self._get_normalized_team_name(
-            api_fixture, 
-            'home_team_name_normalized', 
-            'home_team_name'
-        )
-        api_away = self._get_normalized_team_name(
-            api_fixture, 
-            'away_team_name_normalized', 
-            'away_team_name'
-        )
         api_time = api_fixture.get('match_timestamp_utc')
         fixture_id = api_fixture.get('fixture_id')
+        api_home_name = api_fixture.get('home_team_name', '')
+        api_away_name = api_fixture.get('away_team_name', '')
         
-        if not all([api_home, api_away, api_time]):
+        if not all([api_home_name, api_away_name, api_time]):
             return MatchAlignment(
                 fixture_id=fixture_id,
                 web_crawl_raw_id=None,
                 result=UNMATCHED,
                 confidence=0.0,
                 channels=None,
-                home_team_name=api_fixture.get('home_team_name', ''),
-                away_team_name=api_fixture.get('away_team_name', ''),
-                match_timestamp_utc=api_time,  # 保留原始时间戳，即使判定为不完整
+                home_team_name=api_home_name,
+                away_team_name=api_away_name,
+                match_timestamp_utc=api_time,
                 reason='API数据不完整'
             )
+        
+        # 获取 API 的 team_id（如果存在）
+        api_home_id = api_fixture.get('home_team_id')
+        api_away_id = api_fixture.get('away_team_id')
+        has_api_team_ids = api_home_id is not None and api_away_id is not None
         
         # 过滤时间匹配的候选
         time_matches = []
@@ -143,13 +174,86 @@ class MatchAligner:
                 result=UNMATCHED,
                 confidence=0.0,
                 channels=None,
-                home_team_name=api_fixture.get('home_team_name', ''),
-                away_team_name=api_fixture.get('away_team_name', ''),
+                home_team_name=api_home_name,
+                away_team_name=api_away_name,
                 match_timestamp_utc=api_time,
                 reason='无时间匹配候选'
             )
         
-        # 在时间内匹配的候选中查找球队匹配
+        # ========== 优先级 1: 基于 team_id 匹配 ==========
+        if has_api_team_ids:
+            team_id_matches = []
+            for candidate in time_matches:
+                web_home_id = candidate.get('resolved_home_team_id')
+                web_away_id = candidate.get('resolved_away_team_id')
+                
+                match_type = self._check_team_id_match(
+                    api_home_id, api_away_id,
+                    web_home_id, web_away_id
+                )
+                
+                if match_type:
+                    # team_id 匹配直接给高置信度
+                    confidence = 1.0 if match_type == 'normal' else 0.7
+                    team_id_matches.append({
+                        'candidate': candidate,
+                        'confidence': confidence,
+                        'match_type': match_type
+                    })
+            
+            if team_id_matches:
+                # 按置信度排序，取最佳匹配
+                team_id_matches.sort(key=lambda x: x['confidence'], reverse=True)
+                best_match = team_id_matches[0]
+                
+                # 检查歧义（多个 team_id 匹配）
+                if len(team_id_matches) > 1:
+                    top_confidence = team_id_matches[0]['confidence']
+                    second_confidence = team_id_matches[1]['confidence']
+                    if second_confidence >= top_confidence * 0.9:
+                        return MatchAlignment(
+                            fixture_id=fixture_id,
+                            web_crawl_raw_id=None,
+                            result=AMBIGUOUS,
+                            confidence=top_confidence,
+                            channels=None,
+                            home_team_name=api_home_name,
+                            away_team_name=api_away_name,
+                            match_timestamp_utc=api_time,
+                            reason=f'team_id 匹配存在歧义: {top_confidence:.2f} vs {second_confidence:.2f}'
+                        )
+                
+                # 返回 team_id 匹配结果
+                channels = best_match['candidate'].get('channel_list')
+                has_channels = channels and len(channels) > 0
+                result = MATCHED if has_channels else MISSING_CHANNELS
+                
+                return MatchAlignment(
+                    fixture_id=fixture_id,
+                    web_crawl_raw_id=best_match['candidate'].get('id'),
+                    result=result,
+                    confidence=best_match['confidence'],
+                    channels=channels if has_channels else None,
+                    home_team_name=api_home_name,
+                    away_team_name=api_away_name,
+                    match_timestamp_utc=api_time,
+                    reason=None if has_channels else '缺少频道信息'
+                )
+        
+        # ========== 优先级 2: 基于球队名称匹配（Fallback） ==========
+        # 标准化API数据 - 优先使用已入库的normalized字段
+        api_home = self._get_normalized_team_name(
+            api_fixture, 
+            'home_team_name_normalized', 
+            'home_team_name'
+        )
+        api_away = self._get_normalized_team_name(
+            api_fixture, 
+            'away_team_name_normalized', 
+            'away_team_name'
+        )
+        
+        # 在时间内匹配的候选中查找球队名称匹配
         team_matches = []
         for candidate in time_matches:
             # 优先使用已入库的normalized字段
@@ -190,8 +294,8 @@ class MatchAligner:
                 result=UNMATCHED,
                 confidence=0.0,
                 channels=None,
-                home_team_name=api_fixture.get('home_team_name', ''),
-                away_team_name=api_fixture.get('away_team_name', ''),
+                home_team_name=api_home_name,
+                away_team_name=api_away_name,
                 match_timestamp_utc=api_time,
                 reason='无球队匹配'
             )
@@ -351,7 +455,7 @@ class MatchAligner:
 def align_matches(
     api_fixtures: List[Dict[str, Any]],
     web_crawls: List[Dict[str, Any]],
-    time_tolerance_hours: float = 4.0
+    time_tolerance_hours: float = 0.0
 ) -> List[MatchAlignment]:
     """
     对齐比赛的便捷函数

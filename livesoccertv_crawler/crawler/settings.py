@@ -54,36 +54,10 @@ DEFAULT_REQUEST_HEADERS = {
 
 # DrissionPage 配置
 DRISSION_PAGE_CONFIG = {
-    'headless': False,  # 开发时设为 False 以便观察，生产可设为 True
+    'headless': True,  # 开发时设为 False 以便观察，生产可设为 True
     'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'window_size': (1920, 1080),
     'timeout': 30,
-}
-
-# 验证码检测配置
-CAPTCHA_CONFIG = {
-    'enabled': True,
-    'check_selectors': [
-        # Cloudflare
-        '#challenge-running',
-        '.cf-browser-verification',
-        'input[name="cf-turnstile-response"]',
-        # reCAPTCHA
-        '.g-recaptcha',
-        'iframe[src*="recaptcha"]',
-        # hCaptcha
-        '.h-captcha',
-        'iframe[src*="hcaptcha"]',
-        # 通用
-        '.captcha',
-        '#captcha',
-        'form[action*="captcha"]',
-        'title:contains("CAPTCHA")',
-        'title:contains("Security Check")',
-        'title:contains("Just a moment")',
-    ],
-    'max_wait_time': 1800,  # 最大等待时间（秒），默认30分钟
-    'check_interval': 2,    # 检查间隔（秒）
 }
 
 # 爬虫默认配置

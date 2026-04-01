@@ -8,7 +8,7 @@ from urllib.parse import urljoin, urlparse
 import scrapy
 from scrapy.http import Request
 
-from crawler.items import LiveSoccerTVMatchItem, CrawlTaskItem, CaptchaDetectedItem
+from crawler.items import LiveSoccerTVMatchItem, CrawlTaskItem
 from crawler.utils.helpers import normalize_team_name, parse_livesoccertv_date, utc_now_timestamp
 
 
@@ -37,7 +37,6 @@ class LiveSoccerTVSpider(scrapy.Spider):
         self.matches_crawled = 0
         self.current_direction = None
         self.visited_cursors = set()  # 已访问的分页游标
-        self.captcha_detected = False
         
         # 翻页按钮缓存（用于调试和验证）
         self._last_pagination_button_info = None
@@ -227,20 +226,24 @@ class LiveSoccerTVSpider(scrapy.Spider):
                     if 'matchrow' in row_class:
                         match_data = self._parse_match_row(row, current_date, page_url, pagination_cursor)
                         if match_data:
-                            # 访问详情页提取国际频道
+                            # 访问详情页提取国际频道和准确的UTC时间戳
                             match_detail_url = match_data.get('match_detail_url', '')
-                            international_channels = self._fetch_international_channels(match_detail_url)
+                            detail_result = self._fetch_international_channels(match_detail_url)
                             
                             # 如果获取失败，跳过该比赛
-                            if not international_channels:
+                            if not detail_result:
                                 self.logger.warning(
-                                    f"Failed to fetch international channels, skipping match: "
-                                    f"{match_data.get('source_match_text', 'Unknown')}"
+                                    f"Failed to fetch data from detail page, skipping match: "
                                 )
                                 continue
                             
+                            # 用详情页的准确时间戳
+                            if detail_result.get('timestamp') is not None:
+                                match_data['match_timestamp_utc'] = detail_result['timestamp']
+                                self.logger.info(f"Set timestamp from detail page: {detail_result['timestamp']}")
+                            
                             # 填充国际频道信息
-                            match_data['channel_list'] = international_channels
+                            match_data['channel_list'] = detail_result['channels']
                             
                             # 立即产出这场比赛 - 流式写入
                             yield match_data
@@ -257,7 +260,7 @@ class LiveSoccerTVSpider(scrapy.Spider):
         翻页抓取 - 流式产出比赛数据（生成器）
         """
         self.current_direction = direction
-        max_pages = 100
+        max_pages = 200
         page_count = 0
         
         self.logger.info(f"Starting {direction} pagination...")
@@ -544,32 +547,24 @@ class LiveSoccerTVSpider(scrapy.Spider):
             match_elem = row.ele('css:td#match a', timeout=0.5)
             match_text = match_elem.text.strip() if match_elem else ''
             match_detail_url = match_elem.attr('href') if match_elem else ''
-            self.logger.info(f"[DEBUG] Extracted match_detail_url: {match_detail_url}")
-            self.logger.info(f"[DEBUG] match_elem found: {match_elem is not None}")
-            self.logger.info(f"match_detail_url现在是:{match_detail_url}")
             
-            home_team, away_team = self._split_match_teams(match_text)
+            home_team, away_team, home_score, away_score = self._split_match_teams(match_text)
             
             if not home_team or not away_team:
                 return None
             
-            # 解析时间戳
-            timezone_hint = self._get_timezone_hint()
-            timestamp = parse_livesoccertv_date(
-                current_date or '',
-                time_text,
-                timezone_hint
-            )
-            
+            # 时间戳将从详情页获取，列表页时间不准确，暂不设置
             # 构建数据（不包含 channel_list，将在后续从详情页提取）
             match_data = {
                 'match_date_text': current_date,
                 'match_time_text': time_text,
-                'match_timestamp_utc': timestamp,
+                'match_timestamp_utc': None,  # 将从详情页获取
                 'home_team_name_raw': home_team,
                 'home_team_name_normalized': normalize_team_name(home_team),
                 'away_team_name_raw': away_team,
                 'away_team_name_normalized': normalize_team_name(away_team),
+                'home_score': home_score,
+                'away_score': away_score,
                 'pagination_cursor': pagination_cursor,
                 'source_match_text': match_text or f"{home_team} vs {away_team}",
                 'page_url': page_url,
@@ -583,64 +578,89 @@ class LiveSoccerTVSpider(scrapy.Spider):
             return None
 
     def _split_match_teams(self, match_text):
-        """从比赛文案中拆分主客队"""
+        """从比赛文案中拆分主客队和比分
+        
+        Returns:
+            tuple: (home_team, away_team, home_score, away_score)
+                   未开赛时比分返回 None
+        """
         text = re.sub(r'\s+', ' ', (match_text or '').strip())
         if not text:
-            return '', ''
+            return '', '', None, None
 
+        # 格式1: "Team1 vs Team2" (未开赛)
         vs_match = re.match(r'^(.*?)\s+vs\s+(.*)$', text, flags=re.IGNORECASE)
         if vs_match:
-            return vs_match.group(1).strip(), vs_match.group(2).strip()
+            return vs_match.group(1).strip(), vs_match.group(2).strip(), None, None
 
-        score_match = re.match(r'^(.*?)\s+\d+\s*-\s*\d+\s+(.*)$', text)
+        # 格式2: "Team1 2 - 1 Team2" (已完赛/进行中)
+        score_match = re.match(r'^(.*?)\s+(\d+)\s*-\s*(\d+)\s+(.*)$', text)
         if score_match:
-            return score_match.group(1).strip(), score_match.group(2).strip()
+            home_team = score_match.group(1).strip()
+            home_score = int(score_match.group(2))
+            away_score = int(score_match.group(3))
+            away_team = score_match.group(4).strip()
+            return home_team, away_team, home_score, away_score
 
-        return '', ''
+        return '', '', None, None
     
 
     def _fetch_international_channels(self, match_detail_url):
         """
-        访问比赛详情页面，提取国际频道信息
+        访问比赛详情页面，提取国际频道信息和准确的UTC时间戳
         
         Args:
             match_detail_url: 比赛详情页面的URL（相对或绝对路径）
         
         Returns:
-            dict: 按国家分组的频道信息
-                  {'Afghanistan': ['FanCode'], 'Algeria': ['beIN SPORTS CONNECT'], ...}
+            dict: {'channels': 按国家分组的频道信息, 'timestamp': UTC秒级时间戳}
+                  {'channels': {'Afghanistan': ['FanCode'], ...}, 'timestamp': 1768757400}
                   如果获取失败，返回空字典 {}
         """
         self.logger.info(f"[DEBUG] _fetch_international_channels called with URL: {match_detail_url}")
         if not match_detail_url:
             return {}
         
-        # 构建完整URL
         if not match_detail_url.startswith('http'):
             match_detail_url = urljoin('https://www.livesoccertv.com', match_detail_url)
         
         try:
-            # 在新标签页打开详情链接
             self.logger.debug(f"Opening match detail page: {match_detail_url}")
             detail_page = self.page.new_tab(match_detail_url)
-            # detail_page.wait.doc_loaded(timeout=15)
-            
-            # # 等待一下确保动态内容加载
-            # time.sleep(1)
             detail_page.ele('css:#dynamic-international-tv table.ichannels', timeout=5)
             
-            # 提取国际频道（传递 detail_page）
             channels = self._extract_international_channels(detail_page)
             
-            # 关闭标签页
+            timestamp = None
+            date_div = detail_page.ele('css:div[class*="m-date"]', timeout=3)
+            if date_div:
+                ts_span = date_div.ele('css:span.ts[dv]', timeout=1)
+                if ts_span:
+                    dv_value = ts_span.attr('dv')
+                    if dv_value:
+                        try:
+                            timestamp = int(dv_value) // 1000
+                            self.logger.info(f"Extracted accurate UTC timestamp from detail page: {timestamp}")
+                        except (ValueError, TypeError) as e:
+                            self.logger.warning(f"Failed to parse dv value '{dv_value}': {e}")
+            
             detail_page.close()
             
-            if channels:
-                self.logger.debug(f"International channels extracted: {len(channels)} countries")
+            if channels or timestamp is not None:
+                result = {}
+                if channels:
+                    result['channels'] = channels
+                    self.logger.debug(f"International channels extracted: {len(channels)} countries")
+                else:
+                    self.logger.warning(f"No international channels found for {match_detail_url}")
+                
+                if timestamp is not None:
+                    result['timestamp'] = timestamp
+                
+                return result if result else {}
             else:
-                self.logger.warning(f"No international channels found for {match_detail_url}")
-            
-            return channels
+                self.logger.warning(f"No data extracted from {match_detail_url}")
+                return {}
         
         except Exception as e:
             self.logger.error(f"Error fetching international channels from {match_detail_url}: {e}")
@@ -781,6 +801,8 @@ class LiveSoccerTVSpider(scrapy.Spider):
         item['home_team_name_normalized'] = match_data.get('home_team_name_normalized')
         item['away_team_name_raw'] = match_data.get('away_team_name_raw')
         item['away_team_name_normalized'] = match_data.get('away_team_name_normalized')
+        item['home_score'] = match_data.get('home_score')
+        item['away_score'] = match_data.get('away_score')
         item['channel_list'] = match_data.get('channel_list', [])
         item['pagination_cursor'] = match_data.get('pagination_cursor')
         item['source_match_text'] = match_data.get('source_match_text')
@@ -803,17 +825,3 @@ class LiveSoccerTVSpider(scrapy.Spider):
         item['error_message'] = error_message
         
         return item
-    
-    def pause_for_captcha(self, league_config_id, page_url, captcha_type, screenshot_path):
-        """暂停处理验证码"""
-        self.captcha_detected = True
-        self.logger.warning(f"Captcha detected ({captcha_type})")
-        self.logger.info(f"Screenshot: {screenshot_path}")
-        
-        return CaptchaDetectedItem(
-            league_config_id=league_config_id,
-            page_url=page_url,
-            detected_at=datetime.utcnow(),
-            captcha_type=captcha_type,
-            screenshot_path=screenshot_path
-        )

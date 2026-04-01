@@ -1,8 +1,3 @@
-"""
-基础 Repository 类
-提供通用的异步 CRUD 操作
-"""
-
 from typing import TypeVar, Generic, List, Optional, Dict, Any, Type
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, func

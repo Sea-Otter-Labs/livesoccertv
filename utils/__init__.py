@@ -1,7 +1,3 @@
-"""
-Utils Package
-"""
-
 from utils.team_normalizer import (
     normalize_team_name,
     normalize_team_names_pair,

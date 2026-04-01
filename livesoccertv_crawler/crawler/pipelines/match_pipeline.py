@@ -7,7 +7,7 @@ import traceback
 import asyncio
 import random
 
-from crawler.items import CaptchaDetectedItem, CrawlTaskItem, LiveSoccerTVMatchItem
+from crawler.items import CrawlTaskItem, LiveSoccerTVMatchItem
 
 workspace_root = os.path.dirname(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -15,7 +15,7 @@ workspace_root = os.path.dirname(
 if workspace_root not in sys.path:
     sys.path.insert(0, workspace_root)
 
-from config.database import AsyncSessionLocal
+from config.database import AsyncSessionLocal, log_pool_status
 from repo.alert_log_repo import AlertLogRepository
 from repo.crawl_task_status_repo import CrawlTaskStatusRepository
 from repo.web_crawl_raw_repo import WebCrawlRawRepository
@@ -109,9 +109,6 @@ class MatchDataPipeline:
         elif isinstance(item, CrawlTaskItem):
             logger.debug(f"[PIPELINE] Processing CrawlTaskItem: phase={item.get('task_phase')}, status={item.get('status')}")
             return await self._process_task_item(item, spider)
-        elif isinstance(item, CaptchaDetectedItem):
-            logger.debug(f"[PIPELINE] Processing CaptchaDetectedItem")
-            return await self._process_captcha_item(item, spider)
 
         logger.warning(f"[PIPELINE] Unknown item type: {item_type}, returning without processing")
         return item
@@ -260,6 +257,9 @@ class MatchDataPipeline:
         
         for attempt in range(1, max_retries + 1):
             try:
+                # 记录连接池状态
+                log_pool_status()
+                
                 logger.info(
                     f"[DB] Saving match (attempt {attempt}/{max_retries}): "
                     f"{home_team} vs {away_team}"
@@ -290,6 +290,10 @@ class MatchDataPipeline:
                 elif is_connection and attempt < self.max_connection_retries:
                     # 连接错误: 指数退避重试
                     delay = self._calculate_backoff_delay(attempt)
+                    
+                    # 记录连接池状态以便诊断
+                    log_pool_status()
+                    
                     logger.warning(
                         f"[DB] Connection error (attempt {attempt}/{self.max_connection_retries}), "
                         f"retrying in {delay:.1f}s... "
@@ -311,57 +315,39 @@ class MatchDataPipeline:
         """
         异步保存/更新比赛数据到数据库 (Upsert)
         
-        增加显式错误处理和 rollback，避免会话污染
+        简化会话管理，依赖 async with 自动关闭会话
         """
-        session = None
-        try:
-            async with AsyncSessionLocal() as session:
-                try:
-                    repo = WebCrawlRawRepository(session)
+        async with AsyncSessionLocal() as session:
+            repo = WebCrawlRawRepository(session)
 
-                    # 计算 match_date
-                    match_timestamp = item.get('match_timestamp_utc')
-                    match_date = None
-                    if match_timestamp:
-                        match_date = datetime.utcfromtimestamp(match_timestamp).date()
+            # 计算 match_date
+            match_timestamp = item.get('match_timestamp_utc')
+            match_date = None
+            if match_timestamp:
+                match_date = datetime.utcfromtimestamp(match_timestamp).date()
 
-                    data = {
-                        'crawl_batch_id': item.get('crawl_batch_id'),
-                        'source_site': item.get('source_site', 'livesoccertv'),
-                        'league_config_id': item.get('league_config_id'),
-                        'league_name': item.get('league_name'),
-                        'match_date_text': item.get('match_date_text'),
-                        'match_timestamp_utc': match_timestamp,
-                        'match_date': match_date,
-                        'home_team_name_raw': item.get('home_team_name_raw'),
-                        'home_team_name_normalized': item.get('home_team_name_normalized'),
-                        'away_team_name_raw': item.get('away_team_name_raw'),
-                        'away_team_name_normalized': item.get('away_team_name_normalized'),
-                        'channel_list': item.get('channel_list'),
-                        'pagination_cursor': item.get('pagination_cursor'),
-                        'source_match_text': item.get('source_match_text'),
-                        'page_url': item.get('page_url'),
-                        'crawled_at': item.get('crawled_at', datetime.utcnow())
-                    }
+            data = {
+                'crawl_batch_id': item.get('crawl_batch_id'),
+                'source_site': item.get('source_site', 'livesoccertv'),
+                'league_config_id': item.get('league_config_id'),
+                'league_name': item.get('league_name'),
+                'match_date_text': item.get('match_date_text'),
+                'match_timestamp_utc': match_timestamp,
+                'match_date': match_date,
+                'home_team_name_raw': item.get('home_team_name_raw'),
+                'home_team_name_normalized': item.get('home_team_name_normalized'),
+                'away_team_name_raw': item.get('away_team_name_raw'),
+                'away_team_name_normalized': item.get('away_team_name_normalized'),
+                'channel_list': item.get('channel_list'),
+                'pagination_cursor': item.get('pagination_cursor'),
+                'source_match_text': item.get('source_match_text'),
+                'page_url': item.get('page_url'),
+                'crawled_at': item.get('crawled_at', datetime.utcnow())
+            }
 
-                    # 使用 upsert：存在则更新，不存在则插入
-                    await repo.upsert_match(data)
-                    await session.commit()
-                    
-                except Exception as e:
-                    # 发生错误时显式回滚
-                    if session:
-                        try:
-                            await session.rollback()
-                            logger.debug(f"[DB] Session rolled back due to: {type(e).__name__}")
-                        except Exception as rollback_error:
-                            logger.warning(f"[DB] Rollback failed: {rollback_error}")
-                    raise
-                    
-        except Exception as e:
-            # 重新抛出，让上层处理
-            logger.debug(f"[DB] Save failed: {type(e).__name__}: {str(e)[:200]}")
-            raise
+            # 使用 upsert：存在则更新，不存在则插入
+            await repo.upsert_match(data)
+            await session.commit()
 
     async def _process_task_item(self, item, spider):
         """处理任务状态 Item"""
@@ -416,41 +402,6 @@ class MatchDataPipeline:
                         'matches_crawled': item.get('matches_crawled'),
                         'error_message': item.get('error_message'),
                     })
-
-                await session.commit()
-                
-            except Exception as e:
-                await session.rollback()
-                raise
-
-    async def _process_captcha_item(self, item, spider):
-        """处理验证码检测 Item"""
-        league_id = item.get('league_config_id', 'N/A')
-
-        try:
-            await self._save_captcha_alert(item)
-            logger.info(f"[CAPTCHA] Saved alert OK: league_id={league_id}")
-        except Exception as e:
-            logger.error(f"[CAPTCHA] FAILED: league_id={league_id}")
-            logger.error(f"[CAPTCHA] Error: {e}")
-            logger.error(f"[CAPTCHA] Traceback: {traceback.format_exc()}")
-
-        return item
-
-    async def _save_captcha_alert(self, item: CaptchaDetectedItem):
-        """异步保存验证码告警（带错误处理和 rollback）"""
-        async with AsyncSessionLocal() as session:
-            try:
-                repo = AlertLogRepository(session)
-
-                await repo.create({
-                    'alert_type': 'captcha_blocked',
-                    'severity': 'high',
-                    'league_config_id': item.get('league_config_id'),
-                    'exception_summary': f"检测到验证码: {item.get('captcha_type')}",
-                    'suggested_action': '请人工处理验证码后继续',
-                    'is_resolved': False,
-                })
 
                 await session.commit()
                 

@@ -1,26 +1,46 @@
 import os
+import sys
 import logging
 import json
-from datetime import datetime
+import hashlib
 from typing import Optional
+from contextlib import asynccontextmanager
 
-from flask import Flask, jsonify, request
-from asgiref.sync import async_to_sync
+from fastapi import FastAPI, Query, HTTPException, Request
+from fastapi.responses import JSONResponse
 import redis
+from datetime import datetime
+from sqlalchemy import text
 
-from api.match_listing import (
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from api.match_channels import (
     DEFAULT_MATCH_LIST_LEAGUE_ID,
     build_list_matches_filters,
     serialize_match_list_item,
 )
-from config.database import AsyncSessionLocal, init_db, close_db
+from api.schemas import (
+    HealthResponse,
+    ErrorResponse,
+    MatchDetailResponse,
+    MatchListResponse,
+    MatchListFilters,
+    MatchListRequest,
+    LeagueListResponse,
+    AlertListResponse,
+    MismatchListResponse,
+    CacheStatusResponse,
+    CacheDeleteResponse,
+    CacheClearResponse,
+)
+
+from config.database import AsyncSessionLocal, init_db
 from repo import MatchBroadcastRepository, AlertLogRepository, LeagueConfigRepository
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-app = Flask(__name__)
 
 # Redis 缓存配置
 redis_client = redis.Redis(
@@ -34,28 +54,103 @@ redis_client = redis.Redis(
 # 缓存过期时间（秒）- 1天
 CACHE_TTL = 86400
 
+
 def get_cache_key(fixture_id: int) -> str:
     """生成比赛详情缓存键"""
     return f"match:detail:{fixture_id}"
 
 
-def get_db_session():
-    """获取数据库会话"""
-    return AsyncSessionLocal()
+def get_list_cache_key(filters: dict) -> str:
+    """
+    生成比赛列表缓存键（分页参数不参与）
+    
+    Args:
+        filters: 筛选参数字典
+    
+    Returns:
+        缓存键字符串
+    """
+    # 排除分页参数
+    cache_params = {
+        k: v for k, v in filters.items() 
+        if v is not None and k not in ('limit', 'offset')
+    }
+    
+    # 统一序列化（None 已排除，布尔值转小写字符串保持一致性）
+    param_str = json.dumps(cache_params, sort_keys=True, separators=(',', ':'))
+    hash_val = hashlib.md5(param_str.encode()).hexdigest()[:16]
+    
+    return f"match:list:{hash_val}"
 
 
-@app.route('/')
-def index():
+# ==================== 生命周期管理 ====================
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期管理"""
+    # 启动时初始化数据库
+    logger.info("Initializing database...")
+    await init_db()
+    logger.info("Database initialized.")
+    yield
+    # 关闭时清理（可选）
+    logger.info("Shutting down...")
+
+
+# 创建 FastAPI 应用
+app = FastAPI(
+    title="Football Broadcasts API",
+    version="2.0.0",
+    lifespan=lifespan
+)
+
+
+# ==================== 路由 ====================
+
+@app.get("/", response_model=HealthResponse)
+async def index():
     """首页"""
-    return jsonify({
-        'service': 'Football Broadcasts API',
-        'version': '1.0.0',
-        'status': 'running'
-    })
+    return HealthResponse()
 
 
-@app.route('/api/matches/<int:fixture_id>')
-def get_match_by_fixture_id(fixture_id: int):
+@app.get("/health", tags=["Health"])
+async def health_check():
+    """
+    详细健康检查端点
+    
+    用于 Docker 健康检查和监控系统
+    """
+    health_status = {
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "services": {}
+    }
+    
+    # 检查数据库连接
+    try:
+        async with AsyncSessionLocal() as session:
+            await session.execute(text("SELECT 1"))
+        health_status["services"]["database"] = "healthy"
+    except Exception as e:
+        health_status["services"]["database"] = f"unhealthy: {str(e)}"
+        health_status["status"] = "unhealthy"
+    
+    # 检查 Redis 连接
+    try:
+        redis_client.ping()
+        health_status["services"]["redis"] = "healthy"
+    except Exception as e:
+        health_status["services"]["redis"] = f"unhealthy: {str(e)}"
+        health_status["status"] = "unhealthy"
+    
+    if health_status["status"] == "unhealthy":
+        raise HTTPException(status_code=503, detail=health_status)
+    
+    return health_status
+
+
+@app.post("/api/matches/{fixture_id}", response_model=MatchDetailResponse)
+async def get_match_by_fixture_id(fixture_id: int):
     """
     获取指定比赛的详情和转播信息（带 Redis 缓存）
     """
@@ -66,368 +161,301 @@ def get_match_by_fixture_id(fixture_id: int):
         cached_data = redis_client.get(cache_key)
         if cached_data:
             logger.info(f"Cache hit for match {fixture_id}")
-            return jsonify(json.loads(cached_data))
+            return MatchDetailResponse(**json.loads(cached_data))
     except Exception as e:
         logger.warning(f"Redis read error: {e}")
 
     # 2. 缓存未命中，从数据库查询
-    async def _fetch():
-        async with AsyncSessionLocal() as session:
-            repo = MatchBroadcastRepository(session)
-            match = await repo.get_by_fixture_id(fixture_id)
+    async with AsyncSessionLocal() as session:
+        repo = MatchBroadcastRepository(session)
+        match = await repo.get_by_fixture_id(fixture_id)
 
-            if not match:
-                return None
+        if not match:
+            raise HTTPException(status_code=404, detail="Match not found")
 
-            return {
+        # 提取频道名称列表
+        channels_data = match.channels or {}
+        channel_names = []
+        for country, channels in channels_data.items():
+            if isinstance(channels, list):
+                channel_names.extend(channels)
+        
+        result = {
+            'fixture_id': match.fixture_id,
+            'channels': match.channels,
+            'channel_names': channel_names
+        }
+
+    # 3. 写入 Redis 缓存（1小时过期）
+    try:
+        redis_client.setex(
+            cache_key,
+            3600,
+            json.dumps(result, ensure_ascii=False)
+        )
+        logger.info(f"Cache set for match {fixture_id}, TTL={CACHE_TTL}s")
+    except Exception as e:
+        logger.warning(f"Redis write error: {e}")
+
+    return MatchDetailResponse(**result)
+
+
+async def parse_list_matches_request(request: Request) -> MatchListRequest:
+    """
+    解析比赛列表请求，同时支持 JSON 和 form-data 格式
+    """
+    content_type = request.headers.get("content-type", "")
+    
+    if "application/json" in content_type:
+        data = await request.json()
+    elif "multipart/form-data" in content_type or "application/x-www-form-urlencoded" in content_type:
+        form_data = await request.form()
+        data = {}
+        for key, value in form_data.items():
+            if value == "":
+                data[key] = None
+            elif key in ["league_id", "season", "start_timestamp", "end_timestamp", "team_id", "limit", "offset"]:
+                data[key] = int(value) if value else None
+            elif key == "has_channels":
+                data[key] = value.lower() == "true" if value else None
+            else:
+                data[key] = value
+    else:
+        # 默认为 JSON
+        data = await request.json()
+    
+    return MatchListRequest(**data)
+
+
+@app.post("/api/matches", response_model=MatchListResponse)
+async def list_matches(request: Request):
+    """
+    获取比赛列表（支持基于筛选条件的缓存）
+    
+    支持 JSON 请求体和 form-data 两种格式传递参数
+    缓存键基于筛选条件（不含分页参数），完整结果缓存后按分页切片返回
+    """
+    req = await parse_list_matches_request(request)
+    # 构建查询参数
+    params = {
+        'league_id': req.league_id,
+        'season': req.season,
+        'start_timestamp': req.start_timestamp,
+        'end_timestamp': req.end_timestamp,
+        'team_id': req.team_id,
+        'status': req.status,
+        'has_channels': req.has_channels,
+        'broadcast_status': req.broadcast_status,
+        'channel_country': req.channel_country if req.channel_country else None,
+        'limit': req.limit,
+        'offset': req.offset,
+    }
+    
+    filters = build_list_matches_filters(params)
+    
+    # 生成缓存键（分页参数不参与）
+    cache_key = get_list_cache_key(filters)
+    
+    # 1. 尝试从 Redis 缓存获取完整结果
+    try:
+        cached_data = redis_client.get(cache_key)
+        if cached_data:
+            logger.info(f"List cache hit: {cache_key}")
+            # 解析缓存的完整结果
+            all_results = json.loads(cached_data)
+            total = len(all_results)
+            
+            # 在缓存结果上进行分页切片
+            if req.limit is not None:
+                paginated_results = all_results[req.offset:req.offset + req.limit]
+            elif req.offset:
+                paginated_results = all_results[req.offset:]
+            else:
+                paginated_results = all_results
+            
+            return MatchListResponse(
+                total=total,
+                offset=req.offset,
+                limit=req.limit,
+                matches=paginated_results
+            )
+    except Exception as e:
+        logger.warning(f"Redis list cache read error: {e}")
+    
+    # 2. 缓存未命中，从数据库查询
+    logger.info(f"List cache miss: {cache_key}, querying database")
+    
+    async with AsyncSessionLocal() as session:
+        repo = MatchBroadcastRepository(session)
+        
+        matches = await repo.get_by_time_range(
+            start_timestamp=filters['start_timestamp'],
+            end_timestamp=filters['end_timestamp'],
+            league_id=filters['league_id'],
+            season=filters['season'],
+            has_channels=filters['has_channels'],
+            broadcast_status=filters['broadcast_status'],
+            channel_country=filters['channel_country'],
+        )
+
+        # 转换所有数据（先序列化，再分页）
+        total = len(matches)
+        all_results = [serialize_match_list_item(match, channel_country=filters['channel_country']) for match in matches]
+        
+        # 3. 写入 Redis 缓存（完整结果，1天过期）
+        try:
+            redis_client.setex(
+                cache_key,
+                CACHE_TTL,
+                json.dumps(all_results, ensure_ascii=False)
+            )
+            logger.info(f"List cache set: {cache_key}, TTL={CACHE_TTL}s, total={total}")
+        except Exception as e:
+            logger.warning(f"Redis list cache write error: {e}")
+        
+        # 4. 分页切片
+        if req.limit is not None:
+            paginated_results = all_results[req.offset:req.offset + req.limit]
+        elif req.offset:
+            paginated_results = all_results[req.offset:]
+        else:
+            paginated_results = all_results
+
+        return MatchListResponse(
+            total=total,
+            offset=req.offset,
+            limit=req.limit,
+            matches=paginated_results
+        )
+
+
+@app.get("/api/leagues", response_model=LeagueListResponse)
+async def list_leagues():
+    """
+    获取联赛列表
+    """
+    async with AsyncSessionLocal() as session:
+        repo = LeagueConfigRepository(session)
+        leagues = await repo.get_enabled_configs()
+        
+        return LeagueListResponse(
+            leagues=[
+                {
+                    'id': l.id,
+                    'api_league_id': l.api_league_id,
+                    'season': l.api_season,
+                    'name': l.league_name,
+                    'country': l.country,
+                    'enabled': l.enabled
+                }
+                for l in leagues
+            ]
+        )
+
+
+@app.get("/api/mismatches", response_model=MismatchListResponse)
+async def list_mismatches(
+    league_id: Optional[int] = Query(None, description="联赛ID"),
+    season: Optional[int] = Query(None, description="赛季"),
+    limit: int = Query(default=100, description="返回数量限制"),
+    offset: int = Query(default=0, description="偏移量"),
+):
+    """
+    获取未对齐/异常的比赛列表
+    """
+    async with AsyncSessionLocal() as session:
+        repo = MatchBroadcastRepository(session)
+        
+        mismatches = await repo.get_mismatches(
+            league_id=league_id,
+            season=season
+        )
+        
+        # 分页
+        total = len(mismatches)
+        mismatches = mismatches[offset:offset + limit]
+        
+        # 转换数据
+        results = []
+        for match in mismatches:
+            results.append({
                 'fixture_id': match.fixture_id,
                 'league_id': match.league_id,
                 'season': match.season,
                 'match_timestamp_utc': match.match_timestamp_utc,
                 'match_date': match.match_date.isoformat() if match.match_date else None,
-                'home_team_id': match.home_team_id,
                 'home_team': match.home_team_name,
-                'away_team_id': match.away_team_id,
                 'away_team': match.away_team_name,
-                'status': match.match_status,
-                'broadcast_match_status': match.broadcast_match_status.value if match.broadcast_match_status else None,
-                'matched_confidence': float(match.matched_confidence) if match.matched_confidence else None,
-                'channels': match.channels,
-                'last_verified_at': match.last_verified_at.isoformat() if match.last_verified_at else None
-            }
-
-    try:
-        result = async_to_sync(_fetch)()
-
-        if not result:
-            return jsonify({'error': 'Match not found'}), 404
-
-        # 3. 写入 Redis 缓存（1天过期）
-        try:
-            redis_client.setex(
-                cache_key,
-                CACHE_TTL,
-                json.dumps(result, ensure_ascii=False)
-            )
-            logger.info(f"Cache set for match {fixture_id}, TTL={CACHE_TTL}s")
-        except Exception as e:
-            logger.warning(f"Redis write error: {e}")
-
-        return jsonify(result)
-
-    except Exception as e:
-        logger.error(f"Error fetching match {fixture_id}: {e}")
-        return jsonify({'error': str(e)}), 500
+                'broadcast_match_status': match.broadcast_match_status.value if hasattr(match.broadcast_match_status, 'value') else match.broadcast_match_status,
+                'matched_confidence': float(match.matched_confidence) if match.matched_confidence else None
+            })
+        
+        return MismatchListResponse(
+            total=total,
+            offset=offset,
+            limit=limit,
+            mismatches=results
+        )
 
 
-@app.route('/api/matches')
-def list_matches():
-    """
-    获取比赛列表
-    
-    Query Parameters:
-        league_id: 联赛ID，默认 140 (可选)
-        season: 赛季 (可选)
-        date_from: 开始日期 UTC timestamp (可选)
-        date_to: 结束日期 UTC timestamp (可选)
-        team_id: 球队ID (可选)
-        status: 比赛状态 (可选)
-        has_channels: 是否有频道信息 true/false (可选)
-        broadcast_status: 转播状态 matched/unmatched/missing_channels/ambiguous (可选)
-        limit: 返回数量限制；不传时返回全部命中结果 (可选)
-        offset: 偏移量，默认 0 (可选)
-    
-    Response:
-        {
-            "total": 150,
-            "offset": 0,
-            "limit": null,
-            "matches": [...]
-        }
-    """
-    async def _fetch():
-        async with AsyncSessionLocal() as session:
-            repo = MatchBroadcastRepository(session)
-            filters = build_list_matches_filters(request.args)
-
-            broadcast_status = filters['broadcast_status']
-            status_enum = None
-            if broadcast_status:
-                from models import BroadcastMatchStatus
-                status_enum = BroadcastMatchStatus(broadcast_status)
-
-            matches = await repo.query_matches(
-                league_id=filters['league_id'],
-                season=filters['season'],
-                date_from=filters['date_from'],
-                date_to=filters['date_to'],
-                team_id=filters['team_id'],
-                status=filters['status'],
-                has_channels=filters['has_channels'],
-                broadcast_status=status_enum,
-            )
-            
-            # 分页
-            total = len(matches)
-            offset = filters['offset']
-            limit = filters['limit']
-            if limit is not None:
-                matches = matches[offset:offset + limit]
-            elif offset:
-                matches = matches[offset:]
-            
-            # 转换数据
-            results = [serialize_match_list_item(match) for match in matches]
-            
-            return {
-                'total': total,
-                'offset': offset,
-                'limit': limit,
-                'filters': {
-                    'league_id': filters['league_id'],
-                    'season': filters['season'],
-                    'date_from': filters['date_from'],
-                    'date_to': filters['date_to'],
-                    'team_id': filters['team_id'],
-                    'status': filters['status'],
-                    'has_channels': filters['has_channels'],
-                    'broadcast_status': broadcast_status,
-                    'default_league_id': DEFAULT_MATCH_LIST_LEAGUE_ID,
-                },
-                'matches': results
-            }
-    
-    try:
-        result = async_to_sync(_fetch)()
-        return jsonify(result)
-    
-    except Exception as e:
-        logger.error(f"Error listing matches: {e}")
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/leagues')
-def list_leagues():
-    """
-    获取联赛列表
-    
-    Response:
-        {
-            "leagues": [
-                {
-                    "id": 1,
-                    "api_league_id": 140,
-                    "season": 2025,
-                    "name": "La Liga",
-                    "country": "Spain",
-                    "enabled": true
-                }
-            ]
-        }
-    """
-    async def _fetch():
-        async with AsyncSessionLocal() as session:
-            repo = LeagueConfigRepository(session)
-            leagues = await repo.get_enabled_configs()
-            
-            return {
-                'leagues': [
-                    {
-                        'id': l.id,
-                        'api_league_id': l.api_league_id,
-                        'season': l.api_season,
-                        'name': l.league_name,
-                        'country': l.country,
-                        'enabled': l.enabled
-                    }
-                    for l in leagues
-                ]
-            }
-    
-    try:
-        result = async_to_sync(_fetch)()
-        return jsonify(result)
-    
-    except Exception as e:
-        logger.error(f"Error listing leagues: {e}")
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/mismatches')
-def list_mismatches():
-    """
-    获取未对齐/异常的比赛列表
-    
-    Query Parameters:
-        league_id: 联赛ID (可选)
-        season: 赛季 (可选)
-        limit: 返回数量限制，默认 100 (可选)
-        offset: 偏移量，默认 0 (可选)
-    
-    Response:
-        {
-            "total": 10,
-            "offset": 0,
-            "limit": 20,
-            "mismatches": [...]
-        }
-    """
-    async def _fetch():
-        async with AsyncSessionLocal() as session:
-            repo = MatchBroadcastRepository(session)
-            
-            league_id = request.args.get('league_id', type=int)
-            season = request.args.get('season', type=int)
-            limit = request.args.get('limit', 100, type=int)
-            offset = request.args.get('offset', 0, type=int)
-            
-            mismatches = await repo.get_mismatches(
-                league_id=league_id,
-                season=season
-            )
-            
-            # 分页
-            total = len(mismatches)
-            mismatches = mismatches[offset:offset + limit]
-            
-            # 转换数据
-            results = []
-            for match in mismatches:
-                results.append({
-                    'fixture_id': match.fixture_id,
-                    'league_id': match.league_id,
-                    'season': match.season,
-                    'match_timestamp_utc': match.match_timestamp_utc,
-                    'match_date': match.match_date.isoformat() if match.match_date else None,
-                    'home_team': match.home_team_name,
-                    'away_team': match.away_team_name,
-                    'broadcast_match_status': match.broadcast_match_status.value if match.broadcast_match_status else None,
-                    'matched_confidence': float(match.matched_confidence) if match.matched_confidence else None
-                })
-            
-            return {
-                'total': total,
-                'offset': offset,
-                'limit': limit,
-                'mismatches': results
-            }
-    
-    try:
-        result = async_to_sync(_fetch)()
-        return jsonify(result)
-    
-    except Exception as e:
-        logger.error(f"Error listing mismatches: {e}")
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/alerts')
-def list_alerts():
+@app.get("/api/alerts", response_model=AlertListResponse)
+async def list_alerts(
+    unresolved_only: bool = Query(default=True, description="只显示未解决的 true/false"),
+    severity: Optional[str] = Query(None, description="严重等级 critical/high/medium/low"),
+    league_id: Optional[int] = Query(None, description="联赛ID"),
+    limit: int = Query(default=100, description="返回数量限制"),
+    offset: int = Query(default=0, description="偏移量"),
+):
     """
     获取告警列表
-    
-    Query Parameters:
-        unresolved_only: 只显示未解决的 true/false，默认 true (可选)
-        severity: 严重等级 critical/high/medium/low (可选)
-        league_id: 联赛ID (可选)
-        limit: 返回数量限制，默认 100 (可选)
-        offset: 偏移量，默认 0 (可选)
-    
-    Response:
-        {
-            "total": 5,
-            "alerts": [...]
-        }
     """
-    async def _fetch():
-        async with AsyncSessionLocal() as session:
-            repo = AlertLogRepository(session)
-            
-            unresolved_only = request.args.get('unresolved_only', 'true').lower() == 'true'
-            severity = request.args.get('severity')
-            league_id = request.args.get('league_id', type=int)
-            limit = request.args.get('limit', 100, type=int)
-            offset = request.args.get('offset', 0, type=int)
-            
-            if unresolved_only:
-                from models import Severity as SeverityEnum
-                severity_enum = SeverityEnum(severity) if severity else None
-                alerts = await repo.get_unresolved(severity=severity_enum)
-            elif league_id:
-                alerts = await repo.get_by_league(league_id, is_resolved=not unresolved_only)
-            else:
-                alerts = await repo.get_all(limit=limit)
-            
-            # 分页
-            total = len(alerts)
-            alerts = alerts[offset:offset + limit]
-            
-            # 转换数据
-            results = []
-            for alert in alerts:
-                results.append({
-                    'id': alert.id,
-                    'alert_type': alert.alert_type.value if alert.alert_type else None,
-                    'severity': alert.severity.value if alert.severity else None,
-                    'league_id': alert.league_id,
-                    'league_name': alert.league_name,
-                    'fixture_id': alert.fixture_id,
-                    'match_timestamp_utc': alert.match_timestamp_utc,
-                    'home_team_name': alert.home_team_name,
-                    'away_team_name': alert.away_team_name,
-                    'exception_summary': alert.exception_summary,
-                    'suggested_action': alert.suggested_action,
-                    'is_resolved': alert.is_resolved,
-                    'created_at': alert.created_at.isoformat() if alert.created_at else None
-                })
-            
-            return {
-                'total': total,
-                'offset': offset,
-                'limit': limit,
-                'alerts': results
-            }
-    
-    try:
-        result = async_to_sync(_fetch)()
-        return jsonify(result)
-    
-    except Exception as e:
-        logger.error(f"Error listing alerts: {e}")
-        return jsonify({'error': str(e)}), 500
+    async with AsyncSessionLocal() as session:
+        repo = AlertLogRepository(session)
+        
+        if unresolved_only:
+            alerts = await repo.get_unresolved(severity=severity)
+        elif league_id:
+            alerts = await repo.get_by_league(league_id, is_resolved=not unresolved_only)
+        else:
+            alerts = await repo.get_all(limit=limit)
+        
+        # 分页
+        total = len(alerts)
+        alerts = alerts[offset:offset + limit]
+        
+        # 转换数据
+        results = []
+        for alert in alerts:
+            results.append({
+                'id': alert.id,
+                'alert_type': alert.alert_type.value if hasattr(alert.alert_type, 'value') else alert.alert_type,
+                'severity': alert.severity.value if hasattr(alert.severity, 'value') else alert.severity,
+                'league_id': alert.league_id,
+                'league_name': alert.league_name,
+                'fixture_id': alert.fixture_id,
+                'match_timestamp_utc': alert.match_timestamp_utc,
+                'home_team_name': alert.home_team_name,
+                'away_team_name': alert.away_team_name,
+                'exception_summary': alert.exception_summary,
+                'suggested_action': alert.suggested_action,
+                'is_resolved': alert.is_resolved,
+                'created_at': alert.created_at.isoformat() if alert.created_at else None
+            })
+        
+        return AlertListResponse(
+            total=total,
+            offset=offset,
+            limit=limit,
+            alerts=results
+        )
 
 
-@app.errorhandler(404)
-def not_found(error):
-    """404 错误处理"""
-    return jsonify({'error': 'Not found'}), 404
+# ==================== 缓存管理接口 ====================
 
-
-@app.errorhandler(500)
-def internal_error(error):
-    """500 错误处理"""
-    return jsonify({'error': 'Internal server error'}), 500
-
-
-# ==================== 缓存手动管理接口 ====================
-
-@app.route('/api/cache/match/<int:fixture_id>', methods=['GET'])
-def get_match_cache(fixture_id: int):
+@app.get("/api/cache/match/{fixture_id}", response_model=CacheStatusResponse)
+async def get_match_cache(fixture_id: int):
     """
     手动查询比赛详情缓存
-
-    GET /api/cache/match/12345
-
-    Response:
-        {
-            "cached": true,
-            "ttl_seconds": 85000,
-            "data": { ... }
-        }
-        或
-        {
-            "cached": false
-        }
     """
     cache_key = get_cache_key(fixture_id)
 
@@ -435,41 +463,28 @@ def get_match_cache(fixture_id: int):
         # 检查缓存是否存在
         ttl = redis_client.ttl(cache_key)
         if ttl == -2:  # key 不存在
-            return jsonify({'cached': False}), 200
+            return CacheStatusResponse(cached=False)
 
         # 获取缓存数据
         cached_data = redis_client.get(cache_key)
         if cached_data:
-            return jsonify({
-                'cached': True,
-                'ttl_seconds': ttl if ttl > 0 else None,
-                'data': json.loads(cached_data)
-            }), 200
+            return CacheStatusResponse(
+                cached=True,
+                ttl_seconds=ttl if ttl > 0 else None,
+                data=json.loads(cached_data)
+            )
         else:
-            return jsonify({'cached': False}), 200
+            return CacheStatusResponse(cached=False)
 
     except Exception as e:
         logger.error(f"Error checking cache for match {fixture_id}: {e}")
-        return jsonify({'error': str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.route('/api/cache/match/<int:fixture_id>', methods=['DELETE'])
-def delete_match_cache(fixture_id: int):
+@app.delete("/api/cache/match/{fixture_id}", response_model=CacheDeleteResponse)
+async def delete_match_cache(fixture_id: int):
     """
-    手动清除指定比赛的缓存
-
-    DELETE /api/cache/match/12345
-
-    Response:
-        {
-            "deleted": true,
-            "message": "Cache cleared for match 12345"
-        }
-        或
-        {
-            "deleted": false,
-            "message": "Cache key not found for match 12345"
-        }
+    手动清除指定比赛的详情缓存
     """
     cache_key = get_cache_key(fixture_id)
 
@@ -478,65 +493,136 @@ def delete_match_cache(fixture_id: int):
         deleted = redis_client.delete(cache_key)
         if deleted > 0:
             logger.info(f"Cache manually cleared for match {fixture_id}")
-            return jsonify({
-                'deleted': True,
-                'message': f'Cache cleared for match {fixture_id}'
-            }), 200
+            return CacheDeleteResponse(
+                deleted=True,
+                message=f'Cache cleared for match {fixture_id}'
+            )
         else:
-            return jsonify({
-                'deleted': False,
-                'message': f'Cache key not found for match {fixture_id}'
-            }), 200
+            return CacheDeleteResponse(
+                deleted=False,
+                message=f'Cache key not found for match {fixture_id}'
+            )
 
     except Exception as e:
         logger.error(f"Error clearing cache for match {fixture_id}: {e}")
-        return jsonify({'error': str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.route('/api/cache/clear', methods=['POST'])
-def clear_all_match_cache():
+@app.delete("/api/cache/list", response_model=CacheDeleteResponse)
+async def delete_list_cache(
+    league_id: int = Query(default=DEFAULT_MATCH_LIST_LEAGUE_ID, description="联赛ID，默认 140"),
+    season: Optional[int] = Query(None, description="赛季"),
+    start_timestamp: Optional[int] = Query(None, description="开始日期 UTC timestamp"),
+    end_timestamp: Optional[int] = Query(None, description="结束日期 UTC timestamp"),
+    team_id: Optional[int] = Query(None, description="球队ID"),
+    status: Optional[str] = Query(None, description="比赛状态"),
+    has_channels: Optional[bool] = Query(None, description="是否有频道信息 true/false"),
+    broadcast_status: str = Query(default="matched", description="转播状态 matched/unmatched/missing_channels/ambiguous"),
+    channel_country: str = Query(default="Spain", description="频道国家，传空字符串返回所有国家"),
+):
     """
-    批量清除所有比赛详情缓存
+    手动清除指定筛选条件的比赛列表缓存
+    
+    根据传入的筛选参数生成缓存键并删除对应缓存
+    """
+    # 构建筛选参数（排除分页参数）
+    filters = {
+        'league_id': league_id,
+        'season': season,
+        'start_timestamp': start_timestamp,
+        'end_timestamp': end_timestamp,
+        'team_id': team_id,
+        'status': status,
+        'has_channels': has_channels,
+        'broadcast_status': broadcast_status,
+        'channel_country': channel_country if channel_country else None,
+    }
+    
+    cache_key = get_list_cache_key(filters)
+    
+    try:
+        deleted = redis_client.delete(cache_key)
+        if deleted > 0:
+            logger.info(f"List cache manually cleared: {cache_key}")
+            return CacheDeleteResponse(
+                deleted=True,
+                message=f'List cache cleared for filters: {filters}'
+            )
+        else:
+            return CacheDeleteResponse(
+                deleted=False,
+                message=f'List cache key not found: {cache_key}'
+            )
+    except Exception as e:
+        logger.error(f"Error clearing list cache: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-    POST /api/cache/clear
 
-    Response:
-        {
-            "cleared": true,
-            "deleted_count": 15
-        }
+@app.post("/api/cache/clear", response_model=CacheClearResponse)
+async def clear_all_match_cache():
+    """
+    批量清除所有比赛缓存（包括详情缓存和列表缓存）
     """
     try:
-        # 查找所有比赛详情缓存
-        pattern = 'match:detail:*'
-        cursor = 0
         deleted_count = 0
-
+        
+        # 清除比赛详情缓存
+        cursor = 0
         while True:
-            cursor, keys = redis_client.scan(cursor=cursor, match=pattern, count=100)
+            cursor, keys = redis_client.scan(cursor=cursor, match='match:detail:*', count=100)
+            if keys:
+                deleted_count += redis_client.delete(*keys)
+            if cursor == 0:
+                break
+        
+        # 清除比赛列表缓存
+        cursor = 0
+        while True:
+            cursor, keys = redis_client.scan(cursor=cursor, match='match:list:*', count=100)
             if keys:
                 deleted_count += redis_client.delete(*keys)
             if cursor == 0:
                 break
 
         logger.info(f"All match cache manually cleared, deleted {deleted_count} keys")
-        return jsonify({
-            'cleared': True,
-            'deleted_count': deleted_count
-        }), 200
+        return CacheClearResponse(
+            cleared=True,
+            deleted_count=deleted_count
+        )
 
     except Exception as e:
         logger.error(f"Error clearing all match cache: {e}")
-        return jsonify({'error': str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-if __name__ == '__main__':
-    # 初始化数据库
-    async_to_sync(init_db)()
-    
-    # 运行 Flask 应用
-    app.run(
-        host='0.0.0.0',
-        port=int(os.getenv('API_PORT', 5000)),
-        debug=os.getenv('FLASK_DEBUG', 'false').lower() == 'true'
+# ==================== 异常处理 ====================
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request, exc):
+    """HTTP 异常处理"""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": exc.detail}
+    )
+
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request, exc):
+    """通用异常处理"""
+    logger.error(f"Unexpected error: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"error": "Internal server error"}
+    )
+
+
+# ==================== 启动 ====================
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        "api.app:app",
+        host="127.0.0.1",
+        port=int(os.getenv('API_PORT', 30000)),
+        reload=os.getenv('API_RELOAD', 'False').lower() == 'true'
     )

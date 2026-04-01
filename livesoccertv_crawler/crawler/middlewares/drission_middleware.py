@@ -1,3 +1,4 @@
+import time
 from scrapy import signals
 from scrapy.http import HtmlResponse
 from scrapy.exceptions import IgnoreRequest
@@ -7,6 +8,9 @@ import logging
 from utils.proxy_manager import get_proxy_manager
 
 logger = logging.getLogger(__name__)
+
+# 页面挑战/校验页面检测关键词
+CHALLENGE_KEYWORDS = ['请稍候', 'just a moment', 'security check', 'attention required']
 
 
 class DrissionPageMiddleware:
@@ -75,6 +79,32 @@ class DrissionPageMiddleware:
             except Exception as e:
                 logger.error(f"Error closing browser: {e}")
     
+    def _is_challenge_page(self, page) -> bool:
+        """检测页面是否为挑战/校验页面"""
+        title = (page.title or '').lower()
+        return any(kw in title for kw in CHALLENGE_KEYWORDS)
+    
+    def _wait_for_challenge(self, page, url) -> None:
+        """
+        检测到挑战页面时等待30秒后刷新
+        只等待1次，不管结果继续执行
+        """
+        if not self._is_challenge_page(page):
+            return
+        
+        logger.warning(f"[CHALLENGE] Detected challenge page, waiting 30s... URL={url}")
+        time.sleep(30)
+        
+        # 刷新页面
+        page.get(url)
+        timeout = self.config.get('timeout', 30)
+        page.wait.doc_loaded(timeout=timeout)
+        
+        if self._is_challenge_page(page):
+            logger.warning(f"[CHALLENGE] Still present after 30s, continuing anyway. URL={url}")
+        else:
+            logger.info(f"[CHALLENGE] Cleared after waiting. URL={url}")
+    
     def process_request(self, request):
         """
         处理请求
@@ -98,6 +128,9 @@ class DrissionPageMiddleware:
             # 等待页面加载完成
             timeout = self.config.get('timeout', 30)
             self.page.wait.doc_loaded(timeout=timeout)
+            
+            # 检测挑战页面并等待
+            self._wait_for_challenge(self.page, url)
             
             # 获取页面内容
             html = self.page.html

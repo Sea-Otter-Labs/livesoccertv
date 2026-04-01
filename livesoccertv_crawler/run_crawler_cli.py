@@ -41,8 +41,8 @@ async def get_enabled_leagues(db_session: AsyncSession, league_config_id: int = 
 
 def build_scrapy_command(league_config) -> list:
     """构造 scrapy crawl 命令参数"""
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    batch_id = f"batch_{league_config.id}_{timestamp}"
+    # timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    batch_id = f"batch_{league_config.id}"
     
     return [
         "scrapy", "crawl", "livesoccertv",

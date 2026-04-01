@@ -24,6 +24,10 @@ class LiveSoccerTVMatchItem(scrapy.Item):
     away_team_name_raw = scrapy.Field()  # 客队名称原始文本
     away_team_name_normalized = scrapy.Field()  # 客队名称标准化后
     
+    # 比分信息
+    home_score = scrapy.Field()  # 主队比分
+    away_score = scrapy.Field()  # 客队比分
+    
     # 频道信息
     channel_list = scrapy.Field()        # 频道列表
     
@@ -45,13 +49,3 @@ class CrawlTaskItem(scrapy.Item):
     pagination_direction = scrapy.Field()
     matches_crawled = scrapy.Field()
     error_message = scrapy.Field()
-
-
-class CaptchaDetectedItem(scrapy.Item):
-    """验证码检测 Item"""
-    
-    league_config_id = scrapy.Field()
-    page_url = scrapy.Field()
-    detected_at = scrapy.Field()
-    captcha_type = scrapy.Field()
-    screenshot_path = scrapy.Field()
