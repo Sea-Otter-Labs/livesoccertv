@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# 测试
+.pytest_cache/
+.coverage
+htmlcov/
+tests/
+
+# 爬虫相关（不需要）
+livesoccertv_crawler/
+crawler/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 环境配置
+.env
+.env.local
+*.env.backup
+
+# 日志
+logs/
+*.log
+
+# Git
+.git/
+.gitignore
+
+# Docker
+docker/
+Dockerfile
+docker-compose*.yml
+
+# 文档
+*.md
+docs/
+.agents/
+
+# 其他
+.DS_Store
+*.bak
+*.tmp
+*.heapsnapshot
+*.pyc

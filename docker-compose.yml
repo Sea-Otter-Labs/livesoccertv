@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: football-api
+    restart: unless-stopped
+    ports:
+      - "10000:10000"
+    environment:
+      # 数据库配置
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME:-football_broadcasts}
+      DB_USER: ${DB_USER:-football_user}
+      DB_PASSWORD: ${DB_PASSWORD:-changeme}
+      
+      # Redis 配置（使用外部 Redis）
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_DB: ${REDIS_DB:-0}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      
+      # API 配置
+      API_PORT: 10000
+      API_FOOTBALL_KEY: ${API_FOOTBALL_KEY}
+      
+      TZ: Asia/Shanghai
+    volumes:
+      - ../logs:/app/logs
+    networks:
+      - livesoccertv-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:10000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  livesoccertv-network:
+    driver: bridge
+
+volumes:
+  mysql-data:
+    driver: local
