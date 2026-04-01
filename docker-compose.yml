@@ -1,10 +1,8 @@
-version: '3.8'
-
 services:
   app:
     build:
-      context: ..
-      dockerfile: docker/Dockerfile
+      context: .
+      dockerfile: Dockerfile
     container_name: football-api
     restart: unless-stopped
     ports:
@@ -42,7 +40,3 @@ services:
 networks:
   livesoccertv-network:
     driver: bridge
-
-volumes:
-  mysql-data:
-    driver: local
