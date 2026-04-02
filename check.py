@@ -1,48 +1,48 @@
-import time
 from DrissionPage import ChromiumPage, ChromiumOptions
+import os
+import shutil
 
-def test_local_browser():
-    print("1. 正在配置浏览器选项...")
-    co = ChromiumOptions()
+def test_manual_chrome():
+    # 每次运行前清理
+    user_data_path = '/tmp/chrome_test_profile'
+    if os.path.exists(user_data_path):
+        shutil.rmtree(user_data_path)
+
+    print("1. 正在配置选项...")
+    co =ChromiumOptions()
     
-    # 1. 设置浏览器路径 (请确保这里是正确的绝对路径)
-    # 如果不知道路径，请在终端运行: which google-chrome
-    co.set_browser_path('/usr/bin/google-chrome') 
+    # 指定路径
+    co.set_browser_path('/opt/chrome-linux64/chrome')
     
-    # 2. 【关键】不要设置任何 address 或 IP，让它自动分配本地端口
+    # --- root 用户必备参数 ---
+    co.set_argument('--no-sandbox')               # 必须：root 运行的核心
+    co.set_argument('--disable-setuid-sandbox')    禁用沙盒
+    co.set_argument('--headless=new')             # 必须：无界面模式
     
-    # 3. 【关键】Linux 必须参数
-    co.set_argument('--headless=new') 
-    co.set_argument('--no-sandbox')
-    co.set_argument('--disable-dev-shm-usage')
+    # --- 稳定性参数 ---
+    co.set_argument('--disable-dev-shm-usage')    # 必须：防止内存溢出
     co.set_argument('--disable-gpu')
-
-    print("2. 正在尝试启动浏览器 (这可能需要 5-10 秒)...")
+    co.set_argument('--remote-debugging-address=0.0.0.0') # 允许绑定地址
+    
+    # --- 隔离环境 ---
+    co.set_local_port(9444)                       # 使用不常用的端口避免冲突
+    co.set_user_data_path(user_data_path)         # 使用独立的用户数据目录
+    
+    print(f"2. 正在尝试启动浏览器 (端口: 9444, 用户目录: {user_data_path})...")
     
     try:
-        # 初始化页面对象
+        # 启动
         page = ChromiumPage(addr_or_opts=co)
+        print("3. ✅ 浏览器连接成功！")
         
-        print("3. ✅ 浏览器启动成功！")
-        
-        # 访问一个简单的网页测试
-        print("4. 正在访问百度测试...")
+        print("4. 正在测试访问...")
         page.get('https://www.baidu.com')
+        print(f"5. ✅ 页面标题: {page.title}")
         
-        print(f"5. ✅ 网页加载成功，标题: {page.title}")
-        
-        # 稍等一下看看输出
-        time.sleep(2)
-        
-        # 关闭浏览器
         page.quit()
-        print("6. ✅ 测试完成，浏览器已关闭。")
-        
+        print("6. ✅ 测试完成")
     except Exception as e:
-        print(f"❌ 测试失败！错误信息: {e}")
-        print("请检查：")
-        print("1. 路径是否正确？")
-        print("2. 是否安装了浏览器依赖库？")
+        print(f"❌ 启动失败！错误详情:\n{e}")
 
 if __name__ == '__main__':
-    test_local_browser()
+    test_manual_chrome()
