@@ -1,4 +1,9 @@
 import time
+import os
+import hashlib
+import uuid
+import random
+import platform
 from scrapy import signals
 from scrapy.http import HtmlResponse
 from scrapy.exceptions import IgnoreRequest
@@ -40,7 +45,7 @@ class DrissionPageMiddleware:
         
         if self.config.get('headless', False):
             co.headless(True)
-        import platform
+        
         system = platform.system()
         if system == "Linux":
             co.set_argument('--no-sandbox')
@@ -50,7 +55,16 @@ class DrissionPageMiddleware:
             co.set_argument('--headless=new')
             co.set_argument('--disable-gpu')
             co.set_argument('--remote-debugging-address=0.0.0.0')
-            co.set_local_port(9444)
+            
+            # 修复：使用独立用户数据目录，避免与其他 Chrome 实例冲突
+            user_data_path = f'/tmp/chrome_crawler_{uuid.uuid4().hex[:8]}'
+            co.set_user_data_path(user_data_path)
+            logger.info(f"Using Chrome user data path: {user_data_path}")
+            
+            # 使用随机端口避免冲突
+            port = random.randint(9200, 9300)
+            co.set_local_port(port)
+            logger.info(f"Using Chrome debug port: {port}")
         
         # 检测并配置代理（运行时，不依赖 API）
         proxy_manager = get_proxy_manager()
@@ -139,6 +153,45 @@ class DrissionPageMiddleware:
             # 等待页面加载完成
             timeout = self.config.get('timeout', 30)
             self.page.wait.doc_loaded(timeout=timeout)
+            
+            # === 诊断日志 ===
+            logger.info(f"[DEBUG] === Page Load Diagnostics ===")
+            logger.info(f"[DEBUG] URL: {self.page.url}")
+            logger.info(f"[DEBUG] Title: {self.page.title}")
+            logger.info(f"[DEBUG] HTML length: {len(self.page.html)}")
+            
+            # 检查关键元素
+            try:
+                live_container = self.page.ele('css:#_live', timeout=2)
+                logger.info(f"[DEBUG] #_live container: {'FOUND' if live_container else 'NOT FOUND'}")
+            except Exception as e:
+                logger.error(f"[DEBUG] #_live container check failed: {e}")
+            
+            try:
+                table = self.page.ele('css:#_live table.schedules.blueborder', timeout=2)
+                logger.info(f"[DEBUG] Schedule table: {'FOUND' if table else 'NOT FOUND'}")
+            except Exception as e:
+                logger.error(f"[DEBUG] Schedule table check failed: {e}")
+            
+            try:
+                paginations = self.page.eles('css:div.pagination')
+                logger.info(f"[DEBUG] Pagination divs count: {len(paginations)}")
+                for idx, pag in enumerate(paginations[:5]):
+                    logger.info(f"[DEBUG] Pagination[{idx}]: class='{pag.attr('class')}', text='{pag.text[:50]}'")
+            except Exception as e:
+                logger.error(f"[DEBUG] Pagination check failed: {e}")
+            
+            # 保存 HTML 快照
+            import os
+            import hashlib
+            debug_dir = '/tmp/crawler_debug'
+            os.makedirs(debug_dir, exist_ok=True)
+            url_hash = hashlib.md5(url.encode()).hexdigest()[:8]
+            debug_file = os.path.join(debug_dir, f"page_{url_hash}_{int(time.time())}.html")
+            with open(debug_file, 'w', encoding='utf-8') as f:
+                f.write(self.page.html)
+            logger.info(f"[DEBUG] HTML snapshot saved: {debug_file}")
+            logger.info(f"[DEBUG] === End Diagnostics ===")
             
             # 检测挑战页面并等待
             self._wait_for_challenge(self.page, url)

@@ -96,6 +96,35 @@ class LiveSoccerTVSpider(scrapy.Spider):
         left_btn, left_info = self._find_pagination_button('left')
         right_btn, right_info = self._find_pagination_button('right')
         self.logger.info(f"Initial page pagination - Left: {'found' if left_btn else 'NOT FOUND'}, Right: {'found' if right_btn else 'NOT FOUND'}")
+        
+        # === 详细分页诊断 ===
+        self.logger.info(f"[PAGINATION DEBUG] === Searching for pagination buttons ===")
+        
+        # 查找所有可能的分页元素
+        try:
+            all_clickable = self.page.eles('css:div.pagination.clickable')
+            self.logger.info(f"[PAGINATION DEBUG] Found {len(all_clickable)} clickable pagination divs")
+            
+            for idx, btn in enumerate(all_clickable):
+                onclick = btn.attr('onclick') or ''
+                btn_class = btn.attr('class') or ''
+                btn_text = btn.text
+                self.logger.info(
+                    f"[PAGINATION DEBUG] Button[{idx}]: "
+                    f"class='{btn_class}', text='{btn_text}', "
+                    f"onclick='{onclick[:100]}...'"
+                )
+        except Exception as e:
+            self.logger.error(f"[PAGINATION DEBUG] Failed to scan pagination buttons: {e}")
+        
+        # 检查页面是否完全加载
+        try:
+            ready_state = self.page.run_js('return document.readyState;')
+            self.logger.info(f"[PAGINATION DEBUG] Document readyState: {ready_state}")
+        except Exception as e:
+            self.logger.error(f"[PAGINATION DEBUG] Failed to check readyState: {e}")
+        
+        self.logger.info(f"[PAGINATION DEBUG] === End Pagination Search ===")
 
         # 更新任务状态为爬取中 - matches_crawled=0
         yield self._create_task_item(
