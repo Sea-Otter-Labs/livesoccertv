@@ -45,7 +45,7 @@ class DrissionPageMiddleware:
             if system == "Linux":
                 co.set_argument('--no-sandbox')
                 co.set_argument('--disable-dev-shm-usage')
-                co.set_browser_path('/usr/bin/chromium-browser')
+                co.set_browser_path('/usr/bin/google-chrome')
         
         # 检测并配置代理（运行时，不依赖 API）
         proxy_manager = get_proxy_manager()
