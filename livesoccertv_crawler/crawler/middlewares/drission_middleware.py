@@ -40,6 +40,11 @@ class DrissionPageMiddleware:
         
         if self.config.get('headless', False):
             co.headless(True)
+            import platform
+            system = platform.system()
+            if system == "Linux":
+                co.set_argument('--no-sandbox')
+                co.set_argument('--disable-dev-shm-usage')
         
         # 检测并配置代理（运行时，不依赖 API）
         proxy_manager = get_proxy_manager()

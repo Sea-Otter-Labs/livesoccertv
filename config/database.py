@@ -22,8 +22,8 @@ DATABASE_URL = f"mysql+aiomysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{D
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,  # 设置为 True 可查看SQL语句
-    pool_size=30,
-    max_overflow=60,
+    pool_size=100,
+    max_overflow=200,
     pool_timeout=60,  # 连接池超时时间（秒）
     pool_pre_ping=True,
     pool_recycle=3600

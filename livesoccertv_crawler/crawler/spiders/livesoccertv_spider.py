@@ -260,7 +260,7 @@ class LiveSoccerTVSpider(scrapy.Spider):
         翻页抓取 - 流式产出比赛数据（生成器）
         """
         self.current_direction = direction
-        max_pages = 200
+        max_pages = 500
         page_count = 0
         
         self.logger.info(f"Starting {direction} pagination...")
