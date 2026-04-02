@@ -1,8 +1,15 @@
 import sys
 import os
+from dotenv import load_dotenv
+
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
+
+# 加载 .env 环境变量
+env_path = os.path.join(project_root, '.env')
+if os.path.exists(env_path):
+    load_dotenv(env_path)
 
 
 BOT_NAME = 'livesoccertv_crawler'
@@ -54,7 +61,7 @@ DEFAULT_REQUEST_HEADERS = {
 
 # DrissionPage 配置
 DRISSION_PAGE_CONFIG = {
-    'headless': True,  # 开发时设为 False 以便观察，生产可设为 True
+    'headless': False,  # 开发时设为 False 以便观察，生产可设为 True
     'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'window_size': (1920, 1080),
     'timeout': 30,

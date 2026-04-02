@@ -72,8 +72,9 @@ class MatchDataPipeline:
             f"connection_retries={self.max_connection_retries})"
         )
 
-    def open_spider(self, spider):
+    def open_spider(self):
         """Spider 启动时初始化"""
+        spider = self.crawler.spider
         logger.info(f"[PIPELINE] Pipeline opened for spider: {spider.name}")
         logger.info(f"[PIPELINE] Spider batch_id: {getattr(spider, 'crawl_batch_id', 'N/A')}")
         logger.info(f"[PIPELINE] Spider league: {getattr(spider, 'league_name', 'N/A')}")
@@ -87,8 +88,9 @@ class MatchDataPipeline:
         self._db_failure_count = 0
         logger.info("[PIPELINE] Stats initialized")
 
-    def close_spider(self, spider):
+    def close_spider(self):
         """Spider 关闭时输出统计"""
+        spider = self.crawler.spider
         stats = self.batch_stats.get(spider.name, {})
         logger.info(f"[PIPELINE] Pipeline closing for spider: {spider.name}")
         logger.info(
@@ -99,8 +101,9 @@ class MatchDataPipeline:
         )
         logger.info("[PIPELINE] Pipeline closed")
 
-    async def process_item(self, item, spider):
+    async def process_item(self, item):
         """处理 Item"""
+        spider = self.crawler.spider
         item_type = type(item).__name__
 
         if isinstance(item, LiveSoccerTVMatchItem):
