@@ -40,17 +40,17 @@ class DrissionPageMiddleware:
         
         if self.config.get('headless', False):
             co.headless(True)
-            import platform
-            system = platform.system()
-            if system == "Linux":
-                co.set_argument('--no-sandbox')
-                co.set_argument('--disable-dev-shm-usage')
-                co.set_browser_path('/opt/chrome-linux64/chrome')
-                co.set_argument('--disable-setuid-sandbox')
-                co.set_argument('--headless=new')
-                co.set_argument('--disable-gpu')
-                co.set_argument('--remote-debugging-address=0.0.0.0')
-                co.set_local_port(9444)
+        import platform
+        system = platform.system()
+        if system == "Linux":
+            co.set_argument('--no-sandbox')
+            co.set_argument('--disable-dev-shm-usage')
+            co.set_browser_path('/opt/chrome-linux64/chrome')
+            co.set_argument('--disable-setuid-sandbox')
+            co.set_argument('--headless=new')
+            co.set_argument('--disable-gpu')
+            co.set_argument('--remote-debugging-address=0.0.0.0')
+            co.set_local_port(9444)
         
         # 检测并配置代理（运行时，不依赖 API）
         proxy_manager = get_proxy_manager()
