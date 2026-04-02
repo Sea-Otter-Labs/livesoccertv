@@ -7,7 +7,7 @@ def test_local_browser():
     
     # 1. 设置浏览器路径 (请确保这里是正确的绝对路径)
     # 如果不知道路径，请在终端运行: which google-chrome
-    co.set_browser_path('/usr/bin/google-chrome-stable') 
+    co.set_browser_path('/usr/bin/google-chrome') 
     
     # 2. 【关键】不要设置任何 address 或 IP，让它自动分配本地端口
     
