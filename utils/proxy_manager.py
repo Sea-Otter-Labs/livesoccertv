@@ -127,7 +127,8 @@ class ProxyManager:
         """
         获取适用于 Chromium 的代理配置
         
-        Chromium/DrissionPage 支持格式: http://user:pass@host:port
+        DrissionPage 的 set_proxy() 不支持带账号的代理，
+        只接受格式：协议://ip:port
         
         Returns:
             Chromium 代理配置字典
@@ -137,15 +138,17 @@ class ProxyManager:
         
         config = self.config
         
-        # Chromium 支持 http://user:pass@host:port 格式
-        if config.username and config.password:
-            encoded_username = quote(config.username, safe='')
-            encoded_password = quote(config.password, safe='')
-            server = f"http://{encoded_username}:{encoded_password}@{config.host}:{config.port}"
-        else:
-            server = f"http://{config.host}:{config.port}"
-        
+        # DrissionPage 不支持带认证的代理，只使用 host:port
+        server = f"http://{config.host}:{config.port}"
         proxy_config = {'server': server}
+        
+        # 如果配置了认证信息，记录警告
+        if config.username and config.password:
+            logger.warning(
+                "DrissionPage does not support proxy authentication. "
+                "Username/password will be ignored. "
+                "Please ensure your proxy allows IP-based access or whitelist."
+            )
         
         logger.debug(f"Chromium proxy config: server={config.host}:{config.port}")
         return proxy_config
