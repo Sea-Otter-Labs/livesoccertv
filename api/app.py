@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 import redis
 from datetime import datetime
 from sqlalchemy import text
+from fastapi.middleware.cors import CORSMiddleware
 
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -102,6 +103,14 @@ app = FastAPI(
     title="Football Broadcasts API",
     version="2.0.0",
     lifespan=lifespan
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
