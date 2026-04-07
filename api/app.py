@@ -33,7 +33,6 @@ from api.schemas import (
     MismatchListResponse,
     CacheStatusResponse,
     CacheDeleteResponse,
-    CacheClearResponse,
 )
 
 from config.database import AsyncSessionLocal, init_db
@@ -567,41 +566,35 @@ async def delete_list_cache(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/cache/clear", response_model=CacheClearResponse)
-async def clear_all_match_cache():
+def clear_all_match_cache() -> int:
     """
-    批量清除所有比赛缓存（包括详情缓存和列表缓存）
+    清除所有比赛缓存（包括详情缓存和列表缓存）
+    
+    Returns:
+        删除的 key 数量
     """
-    try:
-        deleted_count = 0
-        
-        # 清除比赛详情缓存
-        cursor = 0
-        while True:
-            cursor, keys = redis_client.scan(cursor=cursor, match='match:detail:*', count=100)
-            if keys:
-                deleted_count += redis_client.delete(*keys)
-            if cursor == 0:
-                break
-        
-        # 清除比赛列表缓存
-        cursor = 0
-        while True:
-            cursor, keys = redis_client.scan(cursor=cursor, match='match:list:*', count=100)
-            if keys:
-                deleted_count += redis_client.delete(*keys)
-            if cursor == 0:
-                break
+    deleted_count = 0
+    
+    # 清除比赛详情缓存
+    cursor = 0
+    while True:
+        cursor, keys = redis_client.scan(cursor=cursor, match='match:detail:*', count=100)
+        if keys:
+            deleted_count += redis_client.delete(*keys)
+        if cursor == 0:
+            break
+    
+    # 清除比赛列表缓存
+    cursor = 0
+    while True:
+        cursor, keys = redis_client.scan(cursor=cursor, match='match:list:*', count=100)
+        if keys:
+            deleted_count += redis_client.delete(*keys)
+        if cursor == 0:
+            break
 
-        logger.info(f"All match cache manually cleared, deleted {deleted_count} keys")
-        return CacheClearResponse(
-            cleared=True,
-            deleted_count=deleted_count
-        )
-
-    except Exception as e:
-        logger.error(f"Error clearing all match cache: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    logger.info(f"All match cache cleared, deleted {deleted_count} keys")
+    return deleted_count
 
 
 # ==================== 异常处理 ====================
