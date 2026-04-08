@@ -47,7 +47,7 @@ class DailyTaskOrchestrator:
         self,
         session: AsyncSession,
         league_config_id: Optional[int] = None,
-        skip_api_sync: bool = True,
+        skip_api_sync: bool = False,
         skip_web_crawl: bool = True,  # 默认跳过网页抓取，改为手动运行
         skip_alignment: bool = False
     ) -> Dict[str, Any]:
@@ -180,6 +180,7 @@ class DailyTaskOrchestrator:
         total_unmatched = 0
         total_ambiguous = 0
         total_web_unmatched = 0
+        total_missing_channels = 0
         
         for league in leagues:
             if not league:
@@ -209,7 +210,7 @@ class DailyTaskOrchestrator:
                 )
                 
                 # 执行对齐（双向核对）
-                aligned_count, unmatched_count, ambiguous_count, web_unmatched_count = await self._align_league(
+                aligned_count, unmatched_count, ambiguous_count, web_unmatched_count, missing_channels_count = await self._align_league(
                     session=session,
                     league=league,
                     api_fixtures=api_fixtures,
@@ -220,6 +221,7 @@ class DailyTaskOrchestrator:
                 total_unmatched += unmatched_count
                 total_ambiguous += ambiguous_count
                 total_web_unmatched += web_unmatched_count
+                total_missing_channels += missing_channels_count
                 
             except Exception as e:
                 logger.error(f"Alignment failed for {league.league_name}: {e}")
@@ -230,7 +232,8 @@ class DailyTaskOrchestrator:
             'total_aligned': total_aligned,
             'total_unmatched': total_unmatched,
             'total_ambiguous': total_ambiguous,
-            'total_web_unmatched': total_web_unmatched
+            'total_web_unmatched': total_web_unmatched,
+            'total_missing_channels': total_missing_channels
         }
     
     async def _align_league(
@@ -300,6 +303,19 @@ class DailyTaskOrchestrator:
                     away_team_raw=w.away_team_name_raw
                 )
                 
+                if resolved['home_team_id'] is None:
+                    logger.warning(
+                        f"Team resolution failed for home team - "
+                        f"league: {league.league_name}, web_id: {w.id}, "
+                        f"raw_name: '{w.home_team_name_raw}'"
+                    )
+                if resolved['away_team_id'] is None:
+                    logger.warning(
+                        f"Team resolution failed for away team - "
+                        f"league: {league.league_name}, web_id: {w.id}, "
+                        f"raw_name: '{w.away_team_name_raw}'"
+                    )
+                
                 web_list.append({
                     'id': w.id,
                     'league_config_id': w.league_config_id,
@@ -326,6 +342,11 @@ class DailyTaskOrchestrator:
                 
                 # 通过映射获取原始的 ApiFixture 对象以获取基础字段
                 original_fixture = fixture_map.get(alignment.fixture_id)
+                if original_fixture is None:
+                    logger.warning(
+                        f"Fixture {alignment.fixture_id} not found in fixture_map, "
+                        f"using alignment fallback data"
+                    )
                 
                 if alignment.result == MATCHED:
                     # 对齐成功且频道信息完整，保存到 match_broadcasts 表
@@ -346,12 +367,13 @@ class DailyTaskOrchestrator:
                         'last_verified_at': datetime.utcnow()
                     }
                     
-                    # 使用原子性 upsert 避免并发冲突
-                    await broadcast_repo.upsert_by_fixture_id(data)
-                    
-                    aligned += 1
-                    
-                elif alignment.result == MISSING_CHANNELS:
+                    try:
+                        await broadcast_repo.upsert_by_fixture_id(data)
+                        aligned += 1
+                    except Exception as e:
+                        logger.error(
+                            f"Failed to upsert matched fixture {alignment.fixture_id}: {e}"
+                        )
                     # 对齐成功但缺少频道信息
                     data = {
                         'fixture_id': alignment.fixture_id,
@@ -370,15 +392,18 @@ class DailyTaskOrchestrator:
                         'last_verified_at': datetime.utcnow()
                     }
                     
-                    # 使用原子性 upsert 避免并发冲突
-                    await broadcast_repo.upsert_by_fixture_id(data)
-                    
-                    missing_channels_count += 1
-                    logger.warning(
-                        f"Match {alignment.fixture_id} ({original_fixture.home_team_name if original_fixture else alignment.home_team_name} "
-                        f"vs {original_fixture.away_team_name if original_fixture else alignment.away_team_name}): "
-                        f"aligned but missing channels, reason: {alignment.reason}"
-                    )
+                    try:
+                        await broadcast_repo.upsert_by_fixture_id(data)
+                        missing_channels_count += 1
+                        logger.warning(
+                            f"Match {alignment.fixture_id} ({original_fixture.home_team_name if original_fixture else alignment.home_team_name} "
+                            f"vs {original_fixture.away_team_name if original_fixture else alignment.away_team_name}): "
+                            f"aligned but missing channels, reason: {alignment.reason}"
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"Failed to upsert missing_channels fixture {alignment.fixture_id}: {e}"
+                        )
                     
                 elif alignment.result == UNMATCHED:
                     # 未匹配，创建未匹配记录
@@ -394,12 +419,24 @@ class DailyTaskOrchestrator:
                         'away_team_name': original_fixture.away_team_name if original_fixture else alignment.away_team_name,
                         'broadcast_match_status': 'unmatched',
                         'matched_confidence': 0.0,
+                        'web_crawl_raw_id': alignment.web_crawl_raw_id,
                         'channels': None,
                         'last_verified_at': datetime.utcnow()
                     }
 
-                    # 使用原子性 upsert 避免并发冲突
-                    await broadcast_repo.upsert_by_fixture_id(data)
+                    logger.warning(
+                        f"Unmatched fixture {alignment.fixture_id} "
+                        f"({original_fixture.home_team_name if original_fixture else alignment.home_team_name} "
+                        f"vs {original_fixture.away_team_name if original_fixture else alignment.away_team_name}), "
+                        f"reason: {alignment.reason}"
+                    )
+
+                    try:
+                        await broadcast_repo.upsert_by_fixture_id(data)
+                    except Exception as e:
+                        logger.error(
+                            f"Failed to upsert unmatched fixture {alignment.fixture_id}: {e}"
+                        )
 
                     # 创建告警
                     alert_data = {
@@ -453,8 +490,19 @@ class DailyTaskOrchestrator:
                         'last_verified_at': datetime.utcnow()
                     }
 
-                    # 使用原子性 upsert 避免并发冲突
-                    await broadcast_repo.upsert_by_fixture_id(data)
+                    logger.warning(
+                        f"Ambiguous fixture {alignment.fixture_id} "
+                        f"({original_fixture.home_team_name if original_fixture else alignment.home_team_name} "
+                        f"vs {original_fixture.away_team_name if original_fixture else alignment.away_team_name}), "
+                        f"confidence: {alignment.confidence:.2f}, reason: {alignment.reason}"
+                    )
+
+                    try:
+                        await broadcast_repo.upsert_by_fixture_id(data)
+                    except Exception as e:
+                        logger.error(
+                            f"Failed to upsert ambiguous fixture {alignment.fixture_id}: {e}"
+                        )
 
                     # 创建告警
                     alert_data = {
@@ -494,7 +542,6 @@ class DailyTaskOrchestrator:
             web_unmatched = len(unused_web)
             for web_record in unused_web:
                 web_id = web_record.get('id')
-                web_raw = web_map.get(web_id)
                 
                 logger.error(
                     f"Web crawl record without API fixture match - "
@@ -505,7 +552,14 @@ class DailyTaskOrchestrator:
                     f"away: {web_record.get('away_team_name_raw')}"
                 )
             
-            await session.commit()
+            try:
+                await session.commit()
+            except Exception as e:
+                logger.error(
+                    f"Failed to commit alignment for {league.league_name}: {e}"
+                )
+                await session.rollback()
+                raise
             
             logger.info(
                 f"Alignment completed for {league.league_name}: "
@@ -513,7 +567,7 @@ class DailyTaskOrchestrator:
                 f"{missing_channels_count} missing_channels, {web_unmatched} web_unmatched"
             )
             
-            return aligned, unmatched, ambiguous, web_unmatched
+            return aligned, unmatched, ambiguous, web_unmatched, missing_channels_count
 
 
 async def run_daily_task(api_key: str, league_config_id: Optional[int] = None):

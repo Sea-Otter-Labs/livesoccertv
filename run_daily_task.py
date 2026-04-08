@@ -6,18 +6,22 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+sys.stdout.reconfigure(encoding='utf-8')
+sys.stderr.reconfigure(encoding='utf-8')
+
 from dotenv import load_dotenv
 load_dotenv()
 
 from services import run_daily_task
 
-# 配置日志
+log_file = f'logs/daily_task_{datetime.now().strftime("%Y%m%d")}.log'
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler(f'logs/daily_task_{datetime.now().strftime("%Y%m%d")}.log')
+        logging.FileHandler(log_file, encoding='utf-8')
     ]
 )
 logger = logging.getLogger(__name__)
@@ -73,6 +77,8 @@ async def main():
         logger.info(f"   - Aligned: {alignment.get('total_aligned', 0)}")
         logger.info(f"   - Unmatched: {alignment.get('total_unmatched', 0)}")
         logger.info(f"   - Ambiguous: {alignment.get('total_ambiguous', 0)}")
+        logger.info(f"   - Missing Channels: {alignment.get('total_missing_channels', 0)}")
+        logger.info(f"   - Web Unmatched: {alignment.get('total_web_unmatched', 0)}")
         
         # 错误
         errors = results.get('errors', [])
