@@ -279,30 +279,30 @@ async def list_matches(request: Request):
     cache_key = get_list_cache_key(filters)
     
     # 1. 尝试从 Redis 缓存获取完整结果
-    # try:
-    #     cached_data = redis_client.get(cache_key)
-    #     if cached_data:
-    #         logger.info(f"List cache hit: {cache_key}")
-    #         # 解析缓存的完整结果
-    #         all_results = json.loads(cached_data)
-    #         total = len(all_results)
+    try:
+        cached_data = redis_client.get(cache_key)
+        if cached_data:
+            logger.info(f"List cache hit: {cache_key}")
+            # 解析缓存的完整结果
+            all_results = json.loads(cached_data)
+            total = len(all_results)
             
-    #         # 在缓存结果上进行分页切片
-    #         if req.limit is not None:
-    #             paginated_results = all_results[req.offset:req.offset + req.limit]
-    #         elif req.offset:
-    #             paginated_results = all_results[req.offset:]
-    #         else:
-    #             paginated_results = all_results
+            # 在缓存结果上进行分页切片
+            if req.limit is not None:
+                paginated_results = all_results[req.offset:req.offset + req.limit]
+            elif req.offset:
+                paginated_results = all_results[req.offset:]
+            else:
+                paginated_results = all_results
             
-    #         return MatchListResponse(
-    #             total=total,
-    #             offset=req.offset,
-    #             limit=req.limit,
-    #             matches=paginated_results
-    #         )
-    # except Exception as e:
-    #     logger.warning(f"Redis list cache read error: {e}")
+            return MatchListResponse(
+                total=total,
+                offset=req.offset,
+                limit=req.limit,
+                matches=paginated_results
+            )
+    except Exception as e:
+        logger.warning(f"Redis list cache read error: {e}")
     
     # 2. 缓存未命中，从数据库查询
     logger.info(f"List cache miss: {cache_key}, querying database")
