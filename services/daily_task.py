@@ -273,7 +273,9 @@ class DailyTaskOrchestrator:
                 'season': f.season,
                 'match_timestamp_utc': f.match_timestamp_utc,
                 'home_team_name': f.home_team_name,
+                'home_team_id': f.home_team_id,
                 'away_team_name': f.away_team_name,
+                'away_team_id': f.away_team_id,
                 'status': f.status
             }
             for f in api_fixtures
@@ -349,7 +351,6 @@ class DailyTaskOrchestrator:
                     )
                 
                 if alignment.result == MATCHED:
-                    # 对齐成功且频道信息完整，保存到 match_broadcasts 表
                     data = {
                         'fixture_id': alignment.fixture_id,
                         'league_id': league.api_league_id,
@@ -374,7 +375,8 @@ class DailyTaskOrchestrator:
                         logger.error(
                             f"Failed to upsert matched fixture {alignment.fixture_id}: {e}"
                         )
-                    # 对齐成功但缺少频道信息
+                    
+                elif alignment.result == MISSING_CHANNELS:
                     data = {
                         'fixture_id': alignment.fixture_id,
                         'league_id': league.api_league_id,
