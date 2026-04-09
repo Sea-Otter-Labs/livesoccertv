@@ -253,7 +253,7 @@ async def list_matches(request: Request):
         except ValueError:
             raise HTTPException(
                 status_code=400,
-                detail=f"expire_at 格式无效，期望 ISO 8601 格式（如 2027-04-01T00:00:00.000+08:00），实际传入: {req.expire_at}"
+                # detail=f"expire_at 格式无效，期望 ISO 8601 格式（如 2027-04-01T00:00:00.000+08:00），实际传入: {req.expire_at}"
             )
         start_timestamp = int(dt.timestamp())
         end_timestamp = int((dt + timedelta(days=1)).timestamp())
