@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Query, HTTPException, Request
 from fastapi.responses import JSONResponse
 import redis
-from datetime import datetime
+from datetime import datetime, timedelta
 from sqlalchemy import text
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -222,7 +222,7 @@ async def parse_list_matches_request(request: Request) -> MatchListRequest:
         for key, value in form_data.items():
             if value == "":
                 data[key] = None
-            elif key in ["league_id", "season", "start_timestamp", "end_timestamp", "team_id", "limit", "offset"]:
+            elif key in ["league_id", "season", "team_id", "limit", "offset"]:
                 data[key] = int(value) if value else None
             elif key == "has_channels":
                 data[key] = value.lower() == "true" if value else None
@@ -244,12 +244,26 @@ async def list_matches(request: Request):
     缓存键基于筛选条件（不含分页参数），完整结果缓存后按分页切片返回
     """
     req = await parse_list_matches_request(request)
-    # 构建查询参数
+
+    start_timestamp = None
+    end_timestamp = None
+    if req.expire_at:
+        try:
+            dt = datetime.fromisoformat(req.expire_at)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"expire_at 格式无效，期望 ISO 8601 格式（如 2027-04-01T00:00:00.000+08:00），实际传入: {req.expire_at}"
+            )
+        start_timestamp = int(dt.timestamp())
+        end_timestamp = int((dt + timedelta(days=1)).timestamp())
+        logger.info(f"开始：{start_timestamp} --- 结束：{end_timestamp}")
+
     params = {
         'league_id': req.league_id,
         'season': req.season,
-        'start_timestamp': req.start_timestamp,
-        'end_timestamp': req.end_timestamp,
+        'start_timestamp': start_timestamp,
+        'end_timestamp': end_timestamp,
         'team_id': req.team_id,
         'status': req.status,
         'has_channels': req.has_channels,
@@ -265,30 +279,30 @@ async def list_matches(request: Request):
     cache_key = get_list_cache_key(filters)
     
     # 1. 尝试从 Redis 缓存获取完整结果
-    try:
-        cached_data = redis_client.get(cache_key)
-        if cached_data:
-            logger.info(f"List cache hit: {cache_key}")
-            # 解析缓存的完整结果
-            all_results = json.loads(cached_data)
-            total = len(all_results)
+    # try:
+    #     cached_data = redis_client.get(cache_key)
+    #     if cached_data:
+    #         logger.info(f"List cache hit: {cache_key}")
+    #         # 解析缓存的完整结果
+    #         all_results = json.loads(cached_data)
+    #         total = len(all_results)
             
-            # 在缓存结果上进行分页切片
-            if req.limit is not None:
-                paginated_results = all_results[req.offset:req.offset + req.limit]
-            elif req.offset:
-                paginated_results = all_results[req.offset:]
-            else:
-                paginated_results = all_results
+    #         # 在缓存结果上进行分页切片
+    #         if req.limit is not None:
+    #             paginated_results = all_results[req.offset:req.offset + req.limit]
+    #         elif req.offset:
+    #             paginated_results = all_results[req.offset:]
+    #         else:
+    #             paginated_results = all_results
             
-            return MatchListResponse(
-                total=total,
-                offset=req.offset,
-                limit=req.limit,
-                matches=paginated_results
-            )
-    except Exception as e:
-        logger.warning(f"Redis list cache read error: {e}")
+    #         return MatchListResponse(
+    #             total=total,
+    #             offset=req.offset,
+    #             limit=req.limit,
+    #             matches=paginated_results
+    #         )
+    # except Exception as e:
+    #     logger.warning(f"Redis list cache read error: {e}")
     
     # 2. 缓存未命中，从数据库查询
     logger.info(f"List cache miss: {cache_key}, querying database")

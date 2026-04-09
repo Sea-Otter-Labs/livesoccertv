@@ -33,8 +33,7 @@ class MatchListItem(BaseModel):
 class MatchListFilters(BaseModel):
     league_id: Optional[int] = None
     season: Optional[int] = None
-    start_timestamp: Optional[int] = None
-    end_timestamp: Optional[int] = None
+    expire_at: Optional[str] = None
     team_id: Optional[int] = None
     status: Optional[str] = None
     has_channels: Optional[bool] = None
@@ -47,8 +46,7 @@ class MatchListRequest(BaseModel):
     """比赛列表查询请求"""
     league_id: Optional[int] = Field(default=140, description="联赛ID，默认 140")
     season: Optional[int] = Field(default=None, description="赛季")
-    start_timestamp: Optional[int] = Field(default=None, description="开始日期 UTC timestamp")
-    end_timestamp: Optional[int] = Field(default=None, description="结束日期 UTC timestamp")
+    expire_at: Optional[str] = Field(default=None, description="过期时间 ISO 8601 格式，如 2027-04-01T00:00:00.000+08:00")
     team_id: Optional[int] = Field(default=None, description="球队ID")
     status: Optional[str] = Field(default=None, description="比赛状态")
     has_channels: Optional[bool] = Field(default=None, description="是否有频道信息 true/false")
