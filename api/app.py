@@ -503,81 +503,81 @@ async def get_match_cache(fixture_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.delete("/api/cache/match/{fixture_id}", response_model=CacheDeleteResponse)
-async def delete_match_cache(fixture_id: int):
-    """
-    手动清除指定比赛的详情缓存
-    """
-    cache_key = get_cache_key(fixture_id)
+# @app.delete("/api/cache/match/{fixture_id}", response_model=CacheDeleteResponse)
+# async def delete_match_cache(fixture_id: int):
+#     """
+#     手动清除指定比赛的详情缓存
+#     """
+#     cache_key = get_cache_key(fixture_id)
 
-    try:
-        # 删除缓存
-        deleted = redis_client.delete(cache_key)
-        if deleted > 0:
-            logger.info(f"Cache manually cleared for match {fixture_id}")
-            return CacheDeleteResponse(
-                deleted=True,
-                message=f'Cache cleared for match {fixture_id}'
-            )
-        else:
-            return CacheDeleteResponse(
-                deleted=False,
-                message=f'Cache key not found for match {fixture_id}'
-            )
+#     try:
+#         # 删除缓存
+#         deleted = redis_client.delete(cache_key)
+#         if deleted > 0:
+#             logger.info(f"Cache manually cleared for match {fixture_id}")
+#             return CacheDeleteResponse(
+#                 deleted=True,
+#                 message=f'Cache cleared for match {fixture_id}'
+#             )
+#         else:
+#             return CacheDeleteResponse(
+#                 deleted=False,
+#                 message=f'Cache key not found for match {fixture_id}'
+#             )
 
-    except Exception as e:
-        logger.error(f"Error clearing cache for match {fixture_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+#     except Exception as e:
+#         logger.error(f"Error clearing cache for match {fixture_id}: {e}")
+#         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.delete("/api/cache/list", response_model=CacheDeleteResponse)
-async def delete_list_cache(
-    league_id: int = Query(default=DEFAULT_MATCH_LIST_LEAGUE_ID, description="联赛ID，默认 140"),
-    season: Optional[int] = Query(None, description="赛季"),
-    start_timestamp: Optional[int] = Query(None, description="开始日期 UTC timestamp"),
-    end_timestamp: Optional[int] = Query(None, description="结束日期 UTC timestamp"),
-    team_id: Optional[int] = Query(None, description="球队ID"),
-    status: Optional[str] = Query(None, description="比赛状态"),
-    has_channels: Optional[bool] = Query(None, description="是否有频道信息 true/false"),
-    broadcast_status: str = Query(default="matched", description="转播状态 matched/unmatched/missing_channels/ambiguous"),
-    channel_country: str = Query(default="Spain", description="频道国家，传空字符串返回所有国家"),
-):
-    """
-    手动清除指定筛选条件的比赛列表缓存
+# @app.delete("/api/cache/list", response_model=CacheDeleteResponse)
+# async def delete_list_cache(
+#     league_id: int = Query(default=DEFAULT_MATCH_LIST_LEAGUE_ID, description="联赛ID，默认 140"),
+#     season: Optional[int] = Query(None, description="赛季"),
+#     start_timestamp: Optional[int] = Query(None, description="开始日期 UTC timestamp"),
+#     end_timestamp: Optional[int] = Query(None, description="结束日期 UTC timestamp"),
+#     team_id: Optional[int] = Query(None, description="球队ID"),
+#     status: Optional[str] = Query(None, description="比赛状态"),
+#     has_channels: Optional[bool] = Query(None, description="是否有频道信息 true/false"),
+#     broadcast_status: str = Query(default="matched", description="转播状态 matched/unmatched/missing_channels/ambiguous"),
+#     channel_country: str = Query(default="Spain", description="频道国家，传空字符串返回所有国家"),
+# ):
+#     """
+#     手动清除指定筛选条件的比赛列表缓存
     
-    根据传入的筛选参数生成缓存键并删除对应缓存
-    """
-    # 构建筛选参数（排除分页参数）
-    filters = {
-        'league_id': league_id,
-        'season': season,
-        'start_timestamp': start_timestamp,
-        'end_timestamp': end_timestamp,
-        'team_id': team_id,
-        'status': status,
-        'has_channels': has_channels,
-        'broadcast_status': broadcast_status,
-        'channel_country': channel_country if channel_country else None,
-    }
+#     根据传入的筛选参数生成缓存键并删除对应缓存
+#     """
+#     # 构建筛选参数（排除分页参数）
+#     filters = {
+#         'league_id': league_id,
+#         'season': season,
+#         'start_timestamp': start_timestamp,
+#         'end_timestamp': end_timestamp,
+#         'team_id': team_id,
+#         'status': status,
+#         'has_channels': has_channels,
+#         'broadcast_status': broadcast_status,
+#         'channel_country': channel_country if channel_country else None,
+#     }
     
-    cache_key = get_list_cache_key(filters)
+#     cache_key = get_list_cache_key(filters)
     
-    try:
-        deleted = redis_client.delete(cache_key)
-        if deleted > 0:
-            logger.info(f"List cache manually cleared: {cache_key}")
-            return CacheDeleteResponse(
-                deleted=True,
-                message=f'List cache cleared for filters: {filters}'
-            )
-        else:
-            return CacheDeleteResponse(
-                deleted=False,
-                message=f'List cache key not found: {cache_key}'
-            )
-    except Exception as e:
-        logger.error(f"Error clearing list cache: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+#     try:
+#         deleted = redis_client.delete(cache_key)
+#         if deleted > 0:
+#             logger.info(f"List cache manually cleared: {cache_key}")
+#             return CacheDeleteResponse(
+#                 deleted=True,
+#                 message=f'List cache cleared for filters: {filters}'
+#             )
+#         else:
+#             return CacheDeleteResponse(
+#                 deleted=False,
+#                 message=f'List cache key not found: {cache_key}'
+#             )
+#     except Exception as e:
+#         logger.error(f"Error clearing list cache: {e}")
+#         raise HTTPException(status_code=500, detail=str(e))
 
 
 def clear_all_match_cache() -> int:
