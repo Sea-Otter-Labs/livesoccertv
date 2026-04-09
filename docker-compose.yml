@@ -6,7 +6,7 @@ services:
     container_name: football-api
     restart: unless-stopped
     ports:
-      - "10000:10000"
+      - "8005:8005"
     environment:
       # 数据库配置
       DB_HOST: ${DB_HOST}
@@ -22,7 +22,7 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       
       # API 配置
-      API_PORT: 10000
+      API_PORT: 8005
       API_FOOTBALL_KEY: ${API_FOOTBALL_KEY}
       
       TZ: Asia/Shanghai
@@ -31,7 +31,7 @@ services:
     networks:
       - livesoccertv-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:10000/"]
+      test: ["CMD", "curl", "-f", "http://localhost:8005/"]
       interval: 30s
       timeout: 10s
       retries: 3
