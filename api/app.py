@@ -6,8 +6,9 @@ import hashlib
 from typing import Optional
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Query, HTTPException, Request
+from fastapi import FastAPI, Query, HTTPException, Request, Depends
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import redis
 from datetime import datetime, timedelta
 from sqlalchemy import text
@@ -33,6 +34,7 @@ from api.schemas import (
     MismatchListResponse,
     CacheStatusResponse,
     CacheDeleteResponse,
+    CacheClearResponse,
 )
 
 from config.database import AsyncSessionLocal, init_db
@@ -609,6 +611,39 @@ def clear_all_match_cache() -> int:
 
     logger.info(f"All match cache cleared, deleted {deleted_count} keys")
     return deleted_count
+
+
+security = HTTPBearer()
+
+
+def admin_token_auth(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """管理员 Token 校验依赖"""
+    expected_token = os.getenv('ADMIN_TOKEN')
+    if not expected_token:
+        logger.error("ADMIN_TOKEN environment variable is not set")
+        raise HTTPException(status_code=500, detail="Server authentication not configured")
+    
+    if credentials.credentials != expected_token:
+        logger.warning("Invalid admin token attempt")
+        raise HTTPException(status_code=403, detail="Invalid or missing admin token")
+    
+    return credentials.credentials
+
+
+@app.delete("/api/cache/all", response_model=CacheClearResponse, tags=["Cache"])
+async def delete_all_match_cache(_: str = Depends(admin_token_auth)):
+    """
+    清除所有比赛缓存（需要管理员权限）
+    
+    请求头需携带 Bearer Token：
+        Authorization: Bearer <ADMIN_TOKEN>
+    """
+    try:
+        deleted_count = clear_all_match_cache()
+        return CacheClearResponse(cleared=True, deleted_count=deleted_count)
+    except Exception as e:
+        logger.error(f"Error clearing all match cache via API: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ==================== 异常处理 ====================

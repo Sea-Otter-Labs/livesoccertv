@@ -351,6 +351,7 @@ class MatchDataPipeline:
             # 使用 upsert：存在则更新，不存在则插入
             await repo.upsert_match(data)
             await session.commit()
+            logger.info('[DEBUG] 数据库写入成功')
 
     async def _process_task_item(self, item, spider):
         """处理任务状态 Item"""
